@@ -1,100 +1,65 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-from datetime import date, timedelta
 
-# --- 1. CONFIGURAÇÃO DA PÁGINA (Tem de ser a primeira linha) ---
-st.set_page_config(page_title="Auditoria AIA", layout="wide")
+# 1. Configuração Básica
+st.set_page_config(page_title="Diagnóstico Natal", layout="centered")
 
-st.title("🛡️ Calculadora e Auditoria AIA")
+st.title("⚠️ DIAGNÓSTICO DE CALENDÁRIO")
+st.write("Se está a ler isto, o código carregou corretamente.")
 
-# --- 2. DEFINIÇÃO DE FERIADOS (SEM NATAL) ---
+# 2. Definição dos Feriados (Sem Intervalos de Natal)
 feriados_nacionais = [
     "2025-06-10", "2025-06-19", "2025-08-15", 
     "2025-10-05", "2025-11-01", "2025-12-01", 
-    "2025-12-08", "2025-12-25", # Só dia 25
-    "2026-01-01", # Só dia 1
-    "2026-04-03", "2026-04-25", "2026-05-01"
+    "2025-12-08", "2025-12-25", "2026-01-01"
 ]
 feriados_np = np.array(feriados_nacionais, dtype='datetime64[D]')
 
-# --- 3. INPUTS ---
-col_in1, col_in2 = st.columns(2)
-with col_in1:
-    data_inicio = st.date_input("Data de Início", value=date(2025, 6, 3))
-with col_in2:
-    prazo = st.number_input("Prazo Legal (Dias Úteis)", value=150)
+# 3. Teste Específico: 26 de Dezembro de 2025
+dia_teste = np.datetime64("2025-12-26") # Sexta-feira
+eh_util = np.is_busday(dia_teste, weekmask='1111100', holidays=feriados_np)
 
 st.divider()
+st.header("Teste Crítico: 26 de Dezembro de 2025")
 
-# --- 4. AUDITORIA FORENSE (AGORA NO TOPO) ---
-st.header("1. Auditoria do Calendário (Natal 2025)")
-st.caption("Verifique aqui se o Natal está a ser contado como Férias ou Trabalho.")
+if eh_util:
+    st.success("✅ O dia 26/12/2025 é considerado DIA ÚTIL.")
+    st.write("Conclusão: O sistema NÃO está a aplicar férias judiciais.")
+else:
+    st.error("❌ O dia 26/12/2025 é considerado FERIADO/SUSPENSÃO.")
+    st.write("Conclusão: Algo no seu ambiente Python está a forçar as férias judiciais.")
 
-# Criar calendário de teste (22 Dez a 2 Jan)
-dias_teste = pd.date_range(start="2025-12-22", end="2026-01-02", freq='D')
-audit_data = []
+# 4. Tabela Simples dos Dias de Natal
+st.divider()
+st.header("Verificação Visual (22 Dez a 02 Jan)")
 
-for d in dias_teste:
+dias = pd.date_range(start="2025-12-22", end="2026-01-02", freq='D')
+dados = []
+
+for d in dias:
     dia_np = np.datetime64(d)
-    eh_fds = d.weekday() >= 5 # 5=Sábado, 6=Domingo
-    eh_feriado = d.strftime("%Y-%m-%d") in feriados_nacionais
+    # Verifica se é dia útil para o numpy
+    status_util = np.is_busday(dia_np, weekmask='1111100', holidays=feriados_np)
     
-    # O busday verifica se é dia útil para o cálculo
-    eh_util_calculo = np.is_busday(dia_np, weekmask='1111100', holidays=feriados_np)
+    # Verifica se é fim de semana
+    fds = d.weekday() >= 5
     
-    status = "✅ TRABALHO (Conta)"
-    cor = "background-color: #d4edda; color: green" # Verde
-    
-    if eh_fds: 
-        status = "⏹️ Fim de Semana"
-        cor = "background-color: #e2e3e5; color: black" # Cinza
-    elif eh_feriado: 
-        status = "🔴 Feriado Nacional"
-        cor = "background-color: #f8d7da; color: darkred" # Vermelho
-    elif not eh_util_calculo:
-        # Se não é FDS nem Feriado, mas o sistema diz que NÃO é útil -> ERRO!
-        status = "⚠️ SUSPENSÃO (ERRO)"
-        cor = "background-color: red; color: white; font-weight: bold"
-    
-    audit_data.append({
+    estado = "Trabalho"
+    if fds: estado = "Fim de Semana"
+    elif not status_util: 
+        # Se não é FDS e não é útil, é Feriado ou Suspensão
+        if str(d.date()) in feriados_nacionais:
+            estado = "Feriado Nacional"
+        else:
+            estado = "ERRO: SUSPENSÃO ATIVA"
+            
+    dados.append({
         "Data": d.strftime("%d/%m/%Y"),
         "Dia da Semana": d.strftime("%A"),
-        "Status": status,
-        "_style": cor 
+        "Estado": estado,
+        "É Útil?": "Sim" if status_util else "Não"
     })
 
-df_audit = pd.DataFrame(audit_data)
-
-# Função para pintar a tabela
-def style_audit(row):
-    return [row['_style']] * len(row)
-
-# Mostrar tabela
-st.dataframe(df_audit.style.apply(style_audit, axis=1), use_container_width=True)
-
-# --- 5. RESULTADOS DO CÁLCULO ---
-st.header("2. Cálculo do Prazo Final")
-
-# Cálculo Teórico
-try:
-    fim_np = np.busday_offset(
-        np.datetime64(data_inicio), 
-        prazo, 
-        roll='forward', 
-        weekmask='1111100', 
-        holidays=feriados_np
-    )
-    data_final = pd.to_datetime(fim_np).date()
-    
-    st.subheader(f"Data Limite (Sem Suspensões): {data_final.strftime('%d/%m/%Y')}")
-    
-    if data_final.strftime('%d/%m/%Y') == "08/01/2026":
-        st.success("✅ O resultado está CORRETO (08/01/2026).")
-    else:
-        st.error(f"❌ O resultado {data_final.strftime('%d/%m/%Y')} está ERRADO.")
-        if "SUSPENSÃO" in df_audit['Status'].values:
-            st.warning("O erro deve-se às linhas vermelhas na tabela acima (Férias Judiciais ativas).")
-
-except Exception as e:
-    st.error(f"Erro: {e}")
+df = pd.DataFrame(dados)
+st.table(df)
