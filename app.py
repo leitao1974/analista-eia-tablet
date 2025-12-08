@@ -10,7 +10,7 @@ import re
 import time
 
 # --- Configuração ---
-st.set_page_config(page_title="Analista EIA (RJAIA Completo)", page_icon="⚖️", layout="wide")
+st.set_page_config(page_title="Analista EIA", page_icon="⚖️", layout="wide")
 
 if 'uploader_key' not in st.session_state:
     st.session_state.uploader_key = 0
@@ -295,3 +295,4 @@ if st.button("🚀 Gerar Relatório", type="primary", use_container_width=True):
                     st.write(result)
                 word_file = create_professional_word_doc(result, active_laws, project_type)
                 st.download_button("⬇️ Download Word", word_file.getvalue(), f"Parecer_EIA.docx", on_click=reset_app, type="primary")
+
