@@ -7,10 +7,9 @@ import google.generativeai as genai
 import io
 from datetime import datetime
 import re
-import time
 
 # --- Configuração ---
-st.set_page_config(page_title="Analista EIA (Final)", page_icon="✅", layout="wide")
+st.set_page_config(page_title="Analista EIA (Seletor)", page_icon="🎛️", layout="wide")
 
 if 'uploader_key' not in st.session_state:
     st.session_state.uploader_key = 0
@@ -19,12 +18,28 @@ def reset_app():
     st.session_state.uploader_key += 1
 
 # --- Interface ---
-st.title("✅ Analista EIA (Multi-Modelo)")
-st.markdown("Sistema blindado: Testa vários modelos de IA até encontrar um que funcione.")
+st.title("🎛️ Analista EIA Pro (Seletor Manual)")
+st.markdown("Esta versão lista os modelos que a sua Chave realmente consegue ver.")
 
 with st.sidebar:
-    st.header("🔐 Configuração")
-    api_key = st.text_input("Google API Key", type="password")
+    st.header("🔐 1. Configuração")
+    api_key = st.text_input("Nova Google API Key", type="password")
+    
+    selected_model = None
+    if api_key:
+        try:
+            genai.configure(api_key=api_key)
+            # Tenta listar os modelos disponíveis para esta chave
+            models_list = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
+            
+            if models_list:
+                st.success(f"Chave válida! {len(models_list)} modelos encontrados.")
+                # AQUI ESTÁ O SEGREDO: TU ESCOLHES O MODELO
+                selected_model = st.selectbox("Escolha o Modelo:", models_list, index=0)
+            else:
+                st.error("A chave é válida, mas não tem acesso a nenhum modelo. Crie uma chave num NOVO projeto.")
+        except Exception as e:
+            st.error(f"Erro na Chave: {str(e)}")
 
 uploaded_file = st.file_uploader("Carregue o PDF", type=['pdf'], key=f"uploader_{st.session_state.uploader_key}")
 
@@ -37,7 +52,6 @@ legal_refs = {
 }
 legal_context_str = "\n".join([f"- {k}: {v}" for k, v in legal_refs.items()])
 
-# --- PROMPT ---
 default_prompt = f"""
 Atua como Perito Sénior em Engenharia do Ambiente e Jurista.
 Realiza uma auditoria técnica e legal ao EIA.
@@ -45,67 +59,20 @@ Realiza uma auditoria técnica e legal ao EIA.
 CONTEXTO LEGISLATIVO:
 {legal_context_str}
 
-Usa Markdown: `## TÍTULO`, `**negrito**`, listas `-`.
-
+Usa Markdown para formatar.
 Estrutura o relatório EXATAMENTE nestes 7 Capítulos:
 
 ## 1. ENQUADRAMENTO LEGAL E CONFORMIDADE
-   - O projeto enquadra-se no RJAIA?
-
 ## 2. PRINCIPAIS IMPACTES (Técnico)
-   - Análise por descritor.
-
 ## 3. MEDIDAS DE MITIGAÇÃO PROPOSTAS
-   - Lista as medidas.
-
 ## 4. ANÁLISE CRÍTICA E BENCHMARKING
-   - Comparação com boas práticas e verificação legal.
-
-## 5. FUNDAMENTAÇÃO
-   - Usa `(Pág. X)`.
-
+## 5. FUNDAMENTAÇÃO (Pág. X)
 ## 6. CITAÇÕES RELEVANTES
-   - Transcreve 3 frases entre aspas.
-
 ## 7. CONCLUSÕES
-   - Parecer Final.
 
 Tom: Formal, Técnico e Jurídico.
 """
-instructions = st.text_area("Instruções:", value=default_prompt, height=300)
-
-# ==========================================
-# --- NOVA FUNÇÃO: FORÇA BRUTA DE MODELOS ---
-# ==========================================
-def try_candidate_models(key, text, prompt):
-    """
-    Tenta uma lista de nomes conhecidos. O primeiro que funcionar ganha.
-    """
-    genai.configure(api_key=key)
-    
-    # Lista de prioridade (Do melhor para o mais antigo)
-    candidates = [
-        "gemini-1.5-flash",          # O ideal (rápido, gratuito)
-        "gemini-1.5-flash-latest",   # Alternativa
-        "gemini-1.5-pro",            # Mais potente (pode ter limite menor)
-        "gemini-1.0-pro",            # O clássico estável
-        "gemini-pro"                 # Nome antigo
-    ]
-    
-    safe_text = text[:800000] # Limite seguro
-    last_error = ""
-
-    for model_name in candidates:
-        try:
-            # Tente gerar!
-            model = genai.GenerativeModel(model_name)
-            response = model.generate_content(f"{prompt}\n\nDADOS DO PDF:\n{safe_text}")
-            return response.text, model_name # SUCESSO! Devolve o texto e o nome usado
-        except Exception as e:
-            last_error = str(e)
-            continue # Se falhar, tenta o próximo da lista silenciosamente
-            
-    return f"ERRO FINAL: Nenhum modelo funcionou. Detalhe do último erro: {last_error}", None
+instructions = st.text_area("Instruções:", value=default_prompt, height=200)
 
 # --- Funções Técnicas ---
 def extract_text_pypdf(file):
@@ -119,6 +86,16 @@ def extract_text_pypdf(file):
     except Exception as e:
         return f"ERRO: {str(e)}"
     return text
+
+def analyze_ai(text, prompt, key, model_name):
+    try:
+        genai.configure(api_key=key)
+        model = genai.GenerativeModel(model_name)
+        safe_text = text[:800000]
+        response = model.generate_content(f"{prompt}\n\nDADOS DO PDF:\n{safe_text}")
+        return response.text
+    except Exception as e:
+        return f"Erro IA: {str(e)}"
 
 # --- Helpers Word ---
 def format_bold_runs(paragraph, text):
@@ -178,39 +155,27 @@ def create_professional_word_doc(content, legal_links):
     doc.save(bio)
     return bio
 
-# --- BOTÃO DE AÇÃO ---
+# --- BOTÃO ---
 st.markdown("---")
 
-if st.button("🚀 Gerar Relatório Profissional", type="primary", use_container_width=True):
+if st.button("🚀 Gerar Relatório", type="primary", use_container_width=True):
     if not api_key:
-        st.error("⚠️ ERRO: Insira a Google API Key.")
+        st.error("⚠️ Insira a API Key.")
+    elif not selected_model:
+        st.error("⚠️ Nenhum modelo selecionado na barra lateral.")
     elif not uploaded_file:
-        st.warning("⚠️ ERRO: Carregue um ficheiro PDF.")
+        st.warning("⚠️ Carregue o PDF.")
     else:
-        with st.spinner("⏳ A testar modelos de IA e a processar..."):
-            
-            # 1. Extrair
+        with st.spinner(f"A processar usando o modelo: {selected_model}..."):
             pdf_text = extract_text_pypdf(uploaded_file)
+            result = analyze_ai(pdf_text, instructions, api_key, selected_model)
             
-            # 2. Analisar (USANDO A NOVA FUNÇÃO DE FORÇA BRUTA)
-            result, used_model = try_candidate_models(api_key, pdf_text, instructions)
-            
-            if "ERRO FINAL" in result:
+            if "Erro" in result and len(result) < 200:
                 st.error(result)
             else:
-                st.success(f"✅ Sucesso! (Modelo que funcionou: {used_model})")
+                st.success("✅ Sucesso!")
                 with st.expander("Ver Texto"):
                     st.write(result)
-                
-                # 3. Word
                 word_file = create_professional_word_doc(result, legal_refs)
-                
-                st.download_button(
-                    label="⬇️ DOWNLOAD RELATÓRIO WORD (.docx)", 
-                    data=word_file.getvalue(), 
-                    file_name="Parecer_Tecnico_Final.docx",
-                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                    on_click=reset_app,
-                    type="primary"
-                )
+                st.download_button("⬇️ Download Word", word_file.getvalue(), "Parecer.docx", on_click=reset_app, type="primary")
 
