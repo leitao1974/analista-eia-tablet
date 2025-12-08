@@ -9,7 +9,7 @@ from datetime import datetime
 import re
 
 # --- Configuração ---
-st.set_page_config(page_title="Analista EIA (Seletor)", page_icon="🎛️", layout="wide")
+st.set_page_config(page_title="Analista EIA (Final)", page_icon="📝", layout="wide")
 
 if 'uploader_key' not in st.session_state:
     st.session_state.uploader_key = 0
@@ -18,26 +18,25 @@ def reset_app():
     st.session_state.uploader_key += 1
 
 # --- Interface ---
-st.title("🎛️ Analista EIA Pro (Seletor Manual)")
-st.markdown("Esta versão lista os modelos que a sua Chave realmente consegue ver.")
+st.title("📝 Analista EIA Pro (Layout Corrigido)")
+st.markdown("Relatórios Técnicos com formatação profissional (sem maiúsculas excessivas).")
 
 with st.sidebar:
-    st.header("🔐 1. Configuração")
-    api_key = st.text_input("Nova Google API Key", type="password")
+    st.header("🔐 Configuração")
+    api_key = st.text_input("Google API Key", type="password")
     
     selected_model = None
     if api_key:
         try:
             genai.configure(api_key=api_key)
-            # Tenta listar os modelos disponíveis para esta chave
             models_list = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
-            
             if models_list:
-                st.success(f"Chave válida! {len(models_list)} modelos encontrados.")
-                # AQUI ESTÁ O SEGREDO: TU ESCOLHES O MODELO
-                selected_model = st.selectbox("Escolha o Modelo:", models_list, index=0)
+                st.success(f"Chave válida! {len(models_list)} modelos disponíveis.")
+                # Tenta pré-selecionar o Flash se existir
+                index_flash = next((i for i, m in enumerate(models_list) if 'flash' in m), 0)
+                selected_model = st.selectbox("Escolha o Modelo:", models_list, index=index_flash)
             else:
-                st.error("A chave é válida, mas não tem acesso a nenhum modelo. Crie uma chave num NOVO projeto.")
+                st.error("Chave válida mas sem acesso a modelos.")
         except Exception as e:
             st.error(f"Erro na Chave: {str(e)}")
 
@@ -52,6 +51,7 @@ legal_refs = {
 }
 legal_context_str = "\n".join([f"- {k}: {v}" for k, v in legal_refs.items()])
 
+# --- PROMPT CORRIGIDO (NOVA REGRA DE MAIÚSCULAS) ---
 default_prompt = f"""
 Atua como Perito Sénior em Engenharia do Ambiente e Jurista.
 Realiza uma auditoria técnica e legal ao EIA.
@@ -59,20 +59,40 @@ Realiza uma auditoria técnica e legal ao EIA.
 CONTEXTO LEGISLATIVO:
 {legal_context_str}
 
-Usa Markdown para formatar.
+REGRAS DE FORMATAÇÃO (CRÍTICO):
+1. Usa Markdown: `## TÍTULO`, `**negrito**`, listas `-`.
+2. **REGRA DE OURO:** NÃO escrevas blocos de texto ou frases inteiras em MAIÚSCULAS. 
+   - Errado: "O IMPACTE É SIGNIFICATIVO."
+   - Certo: "O impacte é significativo."
+   - Usa maiúsculas APENAS para siglas (ex: EIA, APA, RJAIA) ou inícios de frase.
+
 Estrutura o relatório EXATAMENTE nestes 7 Capítulos:
 
 ## 1. ENQUADRAMENTO LEGAL E CONFORMIDADE
+   - O projeto enquadra-se no RJAIA?
+
 ## 2. PRINCIPAIS IMPACTES (Técnico)
+   - Análise por descritor.
+
 ## 3. MEDIDAS DE MITIGAÇÃO PROPOSTAS
+   - Lista as medidas.
+
 ## 4. ANÁLISE CRÍTICA E BENCHMARKING
-## 5. FUNDAMENTAÇÃO (Pág. X)
+   - Pontos Fortes e Fracos. (Nota: Escreve em texto corrido normal, sem maiúsculas excessivas).
+   - Comparação com boas práticas.
+
+## 5. FUNDAMENTAÇÃO
+   - Usa `(Pág. X)`.
+
 ## 6. CITAÇÕES RELEVANTES
+   - Transcreve 3 frases entre aspas.
+
 ## 7. CONCLUSÕES
+   - Parecer Final.
 
 Tom: Formal, Técnico e Jurídico.
 """
-instructions = st.text_area("Instruções:", value=default_prompt, height=200)
+instructions = st.text_area("Instruções:", value=default_prompt, height=300)
 
 # --- Funções Técnicas ---
 def extract_text_pypdf(file):
@@ -113,9 +133,13 @@ def parse_markdown_to_docx(doc, markdown_text):
         if not line: continue
         if line.startswith('## ') or re.match(r'^\d+\.\s', line):
             clean = re.sub(r'^(##\s|\d+\.\s)', '', line)
-            doc.add_heading(clean.upper(), level=1)
+            # Remove formatação Markdown extra nos títulos se houver
+            clean = clean.replace('*', '') 
+            # Garante que o título não fica tudo maiúsculas se a IA falhar
+            doc.add_heading(clean.title(), level=1) 
         elif line.startswith('### '):
-            doc.add_heading(line[4:], level=2)
+            clean = line[4:].replace('*', '')
+            doc.add_heading(clean, level=2)
         elif line.startswith('- ') or line.startswith('* '):
             p = doc.add_paragraph(style='List Bullet')
             format_bold_runs(p, line[2:])
@@ -158,15 +182,15 @@ def create_professional_word_doc(content, legal_links):
 # --- BOTÃO ---
 st.markdown("---")
 
-if st.button("🚀 Gerar Relatório", type="primary", use_container_width=True):
+if st.button("🚀 Gerar Relatório Profissional", type="primary", use_container_width=True):
     if not api_key:
         st.error("⚠️ Insira a API Key.")
     elif not selected_model:
-        st.error("⚠️ Nenhum modelo selecionado na barra lateral.")
+        st.error("⚠️ Nenhum modelo selecionado.")
     elif not uploaded_file:
         st.warning("⚠️ Carregue o PDF.")
     else:
-        with st.spinner(f"A processar usando o modelo: {selected_model}..."):
+        with st.spinner(f"A processar com {selected_model}..."):
             pdf_text = extract_text_pypdf(uploaded_file)
             result = analyze_ai(pdf_text, instructions, api_key, selected_model)
             
@@ -177,5 +201,4 @@ if st.button("🚀 Gerar Relatório", type="primary", use_container_width=True):
                 with st.expander("Ver Texto"):
                     st.write(result)
                 word_file = create_professional_word_doc(result, legal_refs)
-                st.download_button("⬇️ Download Word", word_file.getvalue(), "Parecer.docx", on_click=reset_app, type="primary")
-
+                st.download_button("⬇️ Download Word", word_file.getvalue(), "Parecer_Tecnico.docx", on_click=reset_app, type="primary")
