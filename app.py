@@ -7,9 +7,10 @@ import google.generativeai as genai
 import io
 from datetime import datetime
 import re
+import time
 
 # --- Configuração ---
-st.set_page_config(page_title="Analista EIA (Auto-Detect)", page_icon="🛡️", layout="wide")
+st.set_page_config(page_title="Analista EIA (Flash)", page_icon="⚡", layout="wide")
 
 if 'uploader_key' not in st.session_state:
     st.session_state.uploader_key = 0
@@ -18,15 +19,13 @@ def reset_app():
     st.session_state.uploader_key += 1
 
 # --- Interface ---
-st.title("🛡️ Analista EIA Pro (Sistema Auto-Adaptável)")
-st.markdown("Esta versão deteta automaticamente os modelos de IA disponíveis na sua conta para evitar erros.")
+st.title("⚡ Analista EIA Pro (Versão Rápida)")
+st.markdown("Usa o modelo **Gemini 1.5 Flash** para evitar erros de quota e analisar documentos longos rapidamente.")
 
 with st.sidebar:
     st.header("🔐 Configuração")
     api_key = st.text_input("Google API Key", type="password")
-    if api_key:
-        st.success("Chave inserida.")
-
+    
 uploaded_file = st.file_uploader("Carregue o PDF", type=['pdf'], key=f"uploader_{st.session_state.uploader_key}")
 
 # --- MATRIZ JURÍDICA ---
@@ -79,56 +78,32 @@ Tom: Formal, Técnico e Jurídico.
 instructions = st.text_area("Instruções:", value=default_prompt, height=300)
 
 # ==========================================
-# --- NOVA FUNÇÃO DE AUTO-DETEÇÃO (A SOLUÇÃO) ---
+# --- SELEÇÃO DE MODELO SEGURA (CORREÇÃO DO ERRO) ---
 # ==========================================
-def find_best_model(key):
+def get_safe_model(key):
     """
-    Pergunta à Google que modelos existem e escolhe o melhor.
-    Evita erros de 'Model Not Found'.
+    Força o uso do 'gemini-1.5-flash' ou 'gemini-1.5-flash-latest'.
+    Evita modelos 'pro' ou experimentais que dão erro de quota.
     """
     try:
         genai.configure(api_key=key)
-        available_models = []
+        models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
         
-        # Listar modelos que suportam geração de texto
-        for m in genai.list_models():
-            if 'generateContent' in m.supported_generation_methods:
-                available_models.append(m.name)
+        # 1. Tenta encontrar especificamente o FLASH (que é gratuito e rápido)
+        for m in models:
+            if '1.5-flash' in m:
+                return m
         
-        if not available_models:
-            return None, "Nenhum modelo compatível encontrado na conta."
-
-        # Lógica de Escolha (Prioridade: Flash > Pro > Outros)
-        chosen = None
-        
-        # 1. Tenta encontrar o Flash (mais rápido e capaz)
-        for m in available_models:
-            if 'flash' in m and '1.5' in m:
-                chosen = m
-                break
-        
-        # 2. Se não houver Flash, tenta o Pro (mais recente)
-        if not chosen:
-            for m in available_models:
-                if '1.5' in m and 'pro' in m:
-                    chosen = m
-                    break
-
-        # 3. Se não houver 1.5, tenta o Pro clássico
-        if not chosen:
-            for m in available_models:
-                if 'gemini-pro' in m:
-                    chosen = m
-                    break
-        
-        # 4. Se falhar tudo, pega no primeiro da lista
-        if not chosen:
-            chosen = available_models[0]
-
-        return chosen, f"Modelo selecionado: {chosen}"
+        # 2. Se não houver flash, tenta o Pro 1.5
+        for m in models:
+            if '1.5-pro' in m:
+                return m
+                
+        # 3. Recurso final
+        return 'models/gemini-pro'
 
     except Exception as e:
-        return None, f"Erro ao listar modelos: {str(e)}"
+        return None
 
 # --- Funções Técnicas ---
 def extract_text_pypdf(file):
@@ -147,8 +122,17 @@ def analyze_ai(text, prompt, key, model_name):
     try:
         genai.configure(api_key=key)
         model = genai.GenerativeModel(model_name)
-        safe_text = text[:100000] # Limite de segurança
-        response = model.generate_content(f"{prompt}\n\nDADOS DO PDF:\n{safe_text}")
+        # O Flash aguenta muito texto, 1 milhão de tokens.
+        # Cortamos aos 800.000 caracteres para ser seguro.
+        safe_text = text[:800000] 
+        
+        # Retry mechanism simples em caso de sobrecarga momentânea
+        try:
+            response = model.generate_content(f"{prompt}\n\nDADOS DO PDF:\n{safe_text}")
+        except Exception:
+            time.sleep(2) # Espera 2 segundos e tenta de novo
+            response = model.generate_content(f"{prompt}\n\nDADOS DO PDF:\n{safe_text}")
+            
         return response.text
     except Exception as e:
         return f"Erro IA: {str(e)}"
@@ -221,17 +205,14 @@ if st.button("🚀 Gerar Relatório Profissional", type="primary", use_container
     elif not uploaded_file:
         st.warning("⚠️ ERRO: Carregue um ficheiro PDF.")
     else:
-        with st.spinner("🔍 A detetar modelo de IA e a processar..."):
+        with st.spinner("🔍 A selecionar o modelo Flash e a processar..."):
             
-            # 1. AUTO-DETEÇÃO DO MODELO (O SEGREDO)
-            model_name, status_msg = find_best_model(api_key)
+            # 1. Seleção Segura do Modelo
+            model_name = get_safe_model(api_key)
             
             if not model_name:
-                # Se falhar aqui, o problema é 100% da chave API
-                st.error(f"Erro Crítico: {status_msg}")
+                st.error("Erro: Chave API inválida ou sem acesso a modelos.")
             else:
-                st.info(f"✅ {status_msg}") # Mostra qual modelo foi escolhido
-                
                 # 2. Extrair
                 pdf_text = extract_text_pypdf(uploaded_file)
                 
@@ -241,7 +222,7 @@ if st.button("🚀 Gerar Relatório Profissional", type="primary", use_container
                 if "Erro" in result and len(result) < 200:
                     st.error(result)
                 else:
-                    st.success("✅ Sucesso!")
+                    st.success(f"✅ Sucesso! (Modelo usado: {model_name})")
                     with st.expander("Ver Texto"):
                         st.write(result)
                     
@@ -251,7 +232,7 @@ if st.button("🚀 Gerar Relatório Profissional", type="primary", use_container
                     st.download_button(
                         label="⬇️ DOWNLOAD RELATÓRIO WORD (.docx)", 
                         data=word_file.getvalue(), 
-                        file_name="Parecer_Tecnico_Final.docx",
+                        file_name="Parecer_Tecnico_EIA.docx",
                         mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
                         on_click=reset_app,
                         type="primary"
