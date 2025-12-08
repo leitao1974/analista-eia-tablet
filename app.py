@@ -9,7 +9,7 @@ from datetime import datetime
 import re
 
 # --- Configuração ---
-st.set_page_config(page_title="Analista EIA (Final)", page_icon="⚖️", layout="wide")
+st.set_page_config(page_title="Analista EIA (Auto-Detect)", page_icon="🛡️", layout="wide")
 
 if 'uploader_key' not in st.session_state:
     st.session_state.uploader_key = 0
@@ -18,13 +18,14 @@ def reset_app():
     st.session_state.uploader_key += 1
 
 # --- Interface ---
-st.title("⚖️ Analista EIA Pro (Versão Estável)")
-st.markdown("Relatórios Técnicos e Jurídicos com Formatação Profissional.")
+st.title("🛡️ Analista EIA Pro (Sistema Auto-Adaptável)")
+st.markdown("Esta versão deteta automaticamente os modelos de IA disponíveis na sua conta para evitar erros.")
 
 with st.sidebar:
     st.header("🔐 Configuração")
     api_key = st.text_input("Google API Key", type="password")
-    st.info("A usar modelo 'gemini-pro' para máxima compatibilidade.")
+    if api_key:
+        st.success("Chave inserida.")
 
 uploaded_file = st.file_uploader("Carregue o PDF", type=['pdf'], key=f"uploader_{st.session_state.uploader_key}")
 
@@ -39,7 +40,7 @@ legal_context_str = "\n".join([f"- {k}: {v}" for k, v in legal_refs.items()])
 
 # --- PROMPT ---
 default_prompt = f"""
-Atua como um Perito Sénior em Engenharia do Ambiente e Jurista.
+Atua como Perito Sénior em Engenharia do Ambiente e Jurista.
 Realiza uma auditoria técnica e legal ao EIA.
 
 CONTEXTO LEGISLATIVO:
@@ -53,7 +54,7 @@ Usa Markdown para formatar:
 Estrutura o relatório EXATAMENTE nestes 7 Capítulos:
 
 ## 1. ENQUADRAMENTO LEGAL E CONFORMIDADE
-   - O projeto enquadra-se no RJAIA? Cita a legislação correta?
+   - O projeto enquadra-se no RJAIA?
 
 ## 2. PRINCIPAIS IMPACTES (Técnico)
    - Análise por descritor.
@@ -62,8 +63,7 @@ Estrutura o relatório EXATAMENTE nestes 7 Capítulos:
    - Lista as medidas.
 
 ## 4. ANÁLISE CRÍTICA E BENCHMARKING
-   - As medidas cumprem os limites legais?
-   - Compara com boas práticas. Propõe novas medidas.
+   - As medidas cumprem os limites legais? Comparação com boas práticas.
 
 ## 5. FUNDAMENTAÇÃO
    - Usa `(Pág. X)`.
@@ -78,8 +78,59 @@ Tom: Formal, Técnico e Jurídico.
 """
 instructions = st.text_area("Instruções:", value=default_prompt, height=300)
 
-# --- Funções Técnicas ---
+# ==========================================
+# --- NOVA FUNÇÃO DE AUTO-DETEÇÃO (A SOLUÇÃO) ---
+# ==========================================
+def find_best_model(key):
+    """
+    Pergunta à Google que modelos existem e escolhe o melhor.
+    Evita erros de 'Model Not Found'.
+    """
+    try:
+        genai.configure(api_key=key)
+        available_models = []
+        
+        # Listar modelos que suportam geração de texto
+        for m in genai.list_models():
+            if 'generateContent' in m.supported_generation_methods:
+                available_models.append(m.name)
+        
+        if not available_models:
+            return None, "Nenhum modelo compatível encontrado na conta."
 
+        # Lógica de Escolha (Prioridade: Flash > Pro > Outros)
+        chosen = None
+        
+        # 1. Tenta encontrar o Flash (mais rápido e capaz)
+        for m in available_models:
+            if 'flash' in m and '1.5' in m:
+                chosen = m
+                break
+        
+        # 2. Se não houver Flash, tenta o Pro (mais recente)
+        if not chosen:
+            for m in available_models:
+                if '1.5' in m and 'pro' in m:
+                    chosen = m
+                    break
+
+        # 3. Se não houver 1.5, tenta o Pro clássico
+        if not chosen:
+            for m in available_models:
+                if 'gemini-pro' in m:
+                    chosen = m
+                    break
+        
+        # 4. Se falhar tudo, pega no primeiro da lista
+        if not chosen:
+            chosen = available_models[0]
+
+        return chosen, f"Modelo selecionado: {chosen}"
+
+    except Exception as e:
+        return None, f"Erro ao listar modelos: {str(e)}"
+
+# --- Funções Técnicas ---
 def extract_text_pypdf(file):
     text = ""
     try:
@@ -92,15 +143,11 @@ def extract_text_pypdf(file):
         return f"ERRO: {str(e)}"
     return text
 
-def analyze_ai(text, prompt, key):
+def analyze_ai(text, prompt, key, model_name):
     try:
         genai.configure(api_key=key)
-        # MUDANÇA CRÍTICA: Usamos 'gemini-pro' que é universal
-        model = genai.GenerativeModel('gemini-pro')
-        
-        # O gemini-pro tem um limite menor, cortamos o texto por segurança
-        safe_text = text[:100000] 
-        
+        model = genai.GenerativeModel(model_name)
+        safe_text = text[:100000] # Limite de segurança
         response = model.generate_content(f"{prompt}\n\nDADOS DO PDF:\n{safe_text}")
         return response.text
     except Exception as e:
@@ -120,7 +167,6 @@ def parse_markdown_to_docx(doc, markdown_text):
     for line in markdown_text.split('\n'):
         line = line.strip()
         if not line: continue
-        
         if line.startswith('## ') or re.match(r'^\d+\.\s', line):
             clean = re.sub(r'^(##\s|\d+\.\s)', '', line)
             doc.add_heading(clean.upper(), level=1)
@@ -135,12 +181,11 @@ def parse_markdown_to_docx(doc, markdown_text):
 
 def create_professional_word_doc(content, legal_links):
     doc = Document()
-    
     style_normal = doc.styles['Normal']
     style_normal.font.name = 'Calibri'
     style_normal.font.size = Pt(11)
     style_normal.paragraph_format.space_after = Pt(8)
-
+    
     style_h1 = doc.styles['Heading 1']
     style_h1.font.name = 'Cambria'
     style_h1.font.size = Pt(14)
@@ -167,39 +212,47 @@ def create_professional_word_doc(content, legal_links):
     doc.save(bio)
     return bio
 
-# --- BOTÃO DE AÇÃO (CORRIGIDO E VISÍVEL) ---
+# --- BOTÃO DE AÇÃO ---
 st.markdown("---")
 
-# Botão principal - fora da sidebar, largura total
 if st.button("🚀 Gerar Relatório Profissional", type="primary", use_container_width=True):
-    
     if not api_key:
-        st.error("⚠️ ERRO: Insira a Google API Key na barra lateral.")
+        st.error("⚠️ ERRO: Insira a Google API Key.")
     elif not uploaded_file:
         st.warning("⚠️ ERRO: Carregue um ficheiro PDF.")
     else:
-        with st.spinner("⏳ A processar (Leitura > Análise > Word)..."):
-            # 1. Extrair
-            pdf_text = extract_text_pypdf(uploaded_file)
+        with st.spinner("🔍 A detetar modelo de IA e a processar..."):
             
-            # 2. Analisar (com gemini-pro)
-            result = analyze_ai(pdf_text, instructions, api_key)
+            # 1. AUTO-DETEÇÃO DO MODELO (O SEGREDO)
+            model_name, status_msg = find_best_model(api_key)
             
-            if "Erro" in result and len(result) < 200:
-                st.error(result)
+            if not model_name:
+                # Se falhar aqui, o problema é 100% da chave API
+                st.error(f"Erro Crítico: {status_msg}")
             else:
-                st.success("✅ Sucesso!")
-                with st.expander("Ver Texto"):
-                    st.write(result)
+                st.info(f"✅ {status_msg}") # Mostra qual modelo foi escolhido
                 
-                # 3. Word
-                word_file = create_professional_word_doc(result, legal_refs)
+                # 2. Extrair
+                pdf_text = extract_text_pypdf(uploaded_file)
                 
-                st.download_button(
-                    label="⬇️ DOWNLOAD RELATÓRIO WORD (.docx)", 
-                    data=word_file.getvalue(), 
-                    file_name="Parecer_Tecnico_Final.docx",
-                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                    on_click=reset_app,
-                    type="primary"
-                )
+                # 3. Analisar
+                result = analyze_ai(pdf_text, instructions, api_key, model_name)
+                
+                if "Erro" in result and len(result) < 200:
+                    st.error(result)
+                else:
+                    st.success("✅ Sucesso!")
+                    with st.expander("Ver Texto"):
+                        st.write(result)
+                    
+                    # 4. Word
+                    word_file = create_professional_word_doc(result, legal_refs)
+                    
+                    st.download_button(
+                        label="⬇️ DOWNLOAD RELATÓRIO WORD (.docx)", 
+                        data=word_file.getvalue(), 
+                        file_name="Parecer_Tecnico_Final.docx",
+                        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                        on_click=reset_app,
+                        type="primary"
+                    )
