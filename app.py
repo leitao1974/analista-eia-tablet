@@ -7,9 +7,10 @@ import google.generativeai as genai
 import io
 from datetime import datetime
 import re
+import time
 
 # --- Configuração ---
-st.set_page_config(page_title="Analista EIA (Final)", page_icon="📝", layout="wide")
+st.set_page_config(page_title="Analista EIA (Format Fix)", page_icon="📝", layout="wide")
 
 if 'uploader_key' not in st.session_state:
     st.session_state.uploader_key = 0
@@ -18,8 +19,8 @@ def reset_app():
     st.session_state.uploader_key += 1
 
 # --- Interface ---
-st.title("📝 Analista EIA Pro (Layout Corrigido)")
-st.markdown("Relatórios Técnicos com formatação profissional (sem maiúsculas excessivas).")
+st.title("📝 Analista EIA Pro (Formatação Corrigida)")
+st.markdown("Relatórios Técnicos com correção automática de texto (remove maiúsculas excessivas e negritos indevidos).")
 
 with st.sidebar:
     st.header("🔐 Configuração")
@@ -31,12 +32,12 @@ with st.sidebar:
             genai.configure(api_key=api_key)
             models_list = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
             if models_list:
-                st.success(f"Chave válida! {len(models_list)} modelos disponíveis.")
-                # Tenta pré-selecionar o Flash se existir
+                st.success(f"Chave válida! {len(models_list)} modelos.")
+                # Tenta pré-selecionar o Flash
                 index_flash = next((i for i, m in enumerate(models_list) if 'flash' in m), 0)
                 selected_model = st.selectbox("Escolha o Modelo:", models_list, index=index_flash)
             else:
-                st.error("Chave válida mas sem acesso a modelos.")
+                st.error("Chave válida mas sem modelos.")
         except Exception as e:
             st.error(f"Erro na Chave: {str(e)}")
 
@@ -51,7 +52,7 @@ legal_refs = {
 }
 legal_context_str = "\n".join([f"- {k}: {v}" for k, v in legal_refs.items()])
 
-# --- PROMPT CORRIGIDO (NOVA REGRA DE MAIÚSCULAS) ---
+# --- PROMPT REFORÇADO ---
 default_prompt = f"""
 Atua como Perito Sénior em Engenharia do Ambiente e Jurista.
 Realiza uma auditoria técnica e legal ao EIA.
@@ -59,36 +60,21 @@ Realiza uma auditoria técnica e legal ao EIA.
 CONTEXTO LEGISLATIVO:
 {legal_context_str}
 
-REGRAS DE FORMATAÇÃO (CRÍTICO):
-1. Usa Markdown: `## TÍTULO`, `**negrito**`, listas `-`.
-2. **REGRA DE OURO:** NÃO escrevas blocos de texto ou frases inteiras em MAIÚSCULAS. 
-   - Errado: "O IMPACTE É SIGNIFICATIVO."
-   - Certo: "O impacte é significativo."
-   - Usa maiúsculas APENAS para siglas (ex: EIA, APA, RJAIA) ou inícios de frase.
+REGRAS ESTRITAS DE FORMATAÇÃO:
+1. Escreve em "Sentence case" (apenas a primeira letra da frase em maiúscula).
+2. PROIBIDO USAR MAIÚSCULAS EM FRASES INTEIRAS.
+3. PROIBIDO Capitalizar Todas As Palavras (Title Case).
+4. NÃO uses negrito (`**`) nos capítulos 6 e 7.
 
 Estrutura o relatório EXATAMENTE nestes 7 Capítulos:
 
 ## 1. ENQUADRAMENTO LEGAL E CONFORMIDADE
-   - O projeto enquadra-se no RJAIA?
-
 ## 2. PRINCIPAIS IMPACTES (Técnico)
-   - Análise por descritor.
-
 ## 3. MEDIDAS DE MITIGAÇÃO PROPOSTAS
-   - Lista as medidas.
-
 ## 4. ANÁLISE CRÍTICA E BENCHMARKING
-   - Pontos Fortes e Fracos. (Nota: Escreve em texto corrido normal, sem maiúsculas excessivas).
-   - Comparação com boas práticas.
-
-## 5. FUNDAMENTAÇÃO
-   - Usa `(Pág. X)`.
-
-## 6. CITAÇÕES RELEVANTES
-   - Transcreve 3 frases entre aspas.
-
-## 7. CONCLUSÕES
-   - Parecer Final.
+## 5. FUNDAMENTAÇÃO (Pág. X)
+## 6. CITAÇÕES RELEVANTES (Texto normal, entre aspas)
+## 7. CONCLUSÕES (Texto normal)
 
 Tom: Formal, Técnico e Jurídico.
 """
@@ -117,6 +103,29 @@ def analyze_ai(text, prompt, key, model_name):
     except Exception as e:
         return f"Erro IA: {str(e)}"
 
+# ==========================================
+# --- NOVO: FUNÇÃO DE LIMPEZA DE TEXTO ---
+# ==========================================
+def clean_ai_formatting(text):
+    """
+    Remove formatações agressivas da IA (Caps Lock, Title Case, Negritos excessivos)
+    """
+    # 1. Remove marcadores de negrito da IA (**)
+    text = text.replace('**', '') 
+    
+    # 2. Corrige ALL CAPS (se a frase for longa e toda maiúscula)
+    if len(text) > 40 and text.isupper():
+        return text.capitalize() # Converte para apenas a 1ª letra maiúscula
+    
+    # 3. Corrige Title Case (Se mais de 70% das palavras começarem por maiúscula)
+    words = text.split()
+    if len(words) > 6:
+        upper_starts = sum(1 for w in words if w and w[0].isupper())
+        if upper_starts / len(words) > 0.7:
+            return text.capitalize()
+            
+    return text
+
 # --- Helpers Word ---
 def format_bold_runs(paragraph, text):
     parts = re.split(r'(\*\*.*?\*\*)', text)
@@ -128,24 +137,45 @@ def format_bold_runs(paragraph, text):
             paragraph.add_run(part)
 
 def parse_markdown_to_docx(doc, markdown_text):
+    # Flags para saber em que secção estamos
+    in_critical_section = False 
+    
     for line in markdown_text.split('\n'):
         line = line.strip()
         if not line: continue
+        
+        # Detetar Títulos
         if line.startswith('## ') or re.match(r'^\d+\.\s', line):
-            clean = re.sub(r'^(##\s|\d+\.\s)', '', line)
-            # Remove formatação Markdown extra nos títulos se houver
-            clean = clean.replace('*', '') 
-            # Garante que o título não fica tudo maiúsculas se a IA falhar
-            doc.add_heading(clean.title(), level=1) 
+            clean = re.sub(r'^(##\s|\d+\.\s)', '', line).replace('*', '')
+            doc.add_heading(clean.title(), level=1)
+            
+            # Ativa modo de limpeza extra para secções 6 e 7
+            if "CITAÇÕES" in clean.upper() or "CONCLUSÕES" in clean.upper():
+                in_critical_section = True
+            else:
+                in_critical_section = False
+                
         elif line.startswith('### '):
             clean = line[4:].replace('*', '')
             doc.add_heading(clean, level=2)
+            
         elif line.startswith('- ') or line.startswith('* '):
             p = doc.add_paragraph(style='List Bullet')
-            format_bold_runs(p, line[2:])
+            clean_line = line[2:]
+            # Se estivermos nas secções críticas, limpamos a formatação
+            if in_critical_section:
+                clean_line = clean_ai_formatting(clean_line)
+                p.add_run(clean_line) # Adiciona sem negritos
+            else:
+                format_bold_runs(p, clean_line)
         else:
             p = doc.add_paragraph()
-            format_bold_runs(p, line)
+            # Se estivermos nas secções críticas, limpamos a formatação
+            if in_critical_section:
+                clean_line = clean_ai_formatting(line)
+                p.add_run(clean_line) # Adiciona sem negritos
+            else:
+                format_bold_runs(p, line)
 
 def create_professional_word_doc(content, legal_links):
     doc = Document()
