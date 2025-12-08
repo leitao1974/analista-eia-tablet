@@ -60,7 +60,7 @@ def analyze_ai(text, prompt, key):
             return text
             
         genai.configure(api_key=key)
-        model = genai.GenerativeModel('gemini-1.5-flash')
+        model = genai.GenerativeModel('gemini-pro')
         
         # Proteção contra textos vazios
         if len(text.strip()) < 50:
@@ -106,3 +106,4 @@ if st.button("🚀 Analisar"):
                     mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
                     on_click=reset_app
                 )
+
