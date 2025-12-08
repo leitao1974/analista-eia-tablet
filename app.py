@@ -4,182 +4,238 @@ from datetime import timedelta, date
 import holidays
 import io
 from docx import Document
-from docx.shared import Pt, RGBColor
+from docx.shared import Pt, RGBColor, Cm
 
 # --- CONFIGURAÇÃO ---
-st.set_page_config(page_title="Simulador AIA (Simplex)", page_icon="⚡", layout="wide")
+st.set_page_config(page_title="Cronograma AIA 150 Dias", page_icon="📅", layout="wide")
 
-st.title("⚡ Simulador AIA - RJAIA Simplex")
+st.title("📅 Calculadora AIA - Regime Geral (150 Dias)")
 st.markdown("""
-Configurado com os prazos do **Simplex Ambiental**:
-* **Conformidade (Instrução Liminar):** 10 dias úteis.
-* **Consulta Pública:** 35 dias úteis.
+Este modelo reflete o cálculo misto do RJAIA:
+1.  **Fases Iniciais:** Calculadas sequencialmente a partir da entrada.
+2.  **Parecer Técnico Final (PTF):** Calculado regressivamente (40 dias antes do fim).
+3.  **Data Limite (DIA):** Calculada aos 150 dias úteis globais.
 """)
 
-# --- FUNÇÕES DE TEMPO ---
+# --- UTILITÁRIOS DE TEMPO ---
 @st.cache_data
 def obter_feriados(anos):
     # Feriados Nacionais PT
     return holidays.PT(years=anos)
 
-def eh_dia_util(data_check, lista_feriados):
-    # Retorna True se for dia útil (seg-sex e não feriado)
-    if data_check.weekday() >= 5: return False
-    if data_check in lista_feriados: return False
+def eh_dia_util(data, feriados):
+    # Fim de semana (5=Sab, 6=Dom) ou Feriado
+    if data.weekday() >= 5: return False
+    if data in feriados: return False
     return True
 
-def proximo_dia_util(data_ref, lista_feriados):
-    # Avança até encontrar um dia útil
-    d = data_ref
-    while not eh_dia_util(d, lista_feriados):
+def proximo_dia_util(data, feriados):
+    d = data
+    while not eh_dia_util(d, feriados):
         d += timedelta(days=1)
     return d
 
-def somar_dias_uteis(inicio, dias, lista_feriados, incluir_inicio=False):
+def somar_dias_uteis(inicio, dias, feriados):
+    # Regra CPA: O prazo conta-se a partir do dia útil seguinte
+    # Mas para calcular datas "corridas" de fases, somamos dia a dia
     data_atual = inicio
-    dias_contados = 0
+    dias_adicionados = 0
     
-    # Se quisermos contar o próprio dia de início como Dia 1 (opcional)
-    if incluir_inicio and eh_dia_util(data_atual, lista_feriados):
-        dias_contados = 1
-    
-    while dias_contados < dias:
+    while dias_adicionados < dias:
         data_atual += timedelta(days=1)
-        if eh_dia_util(data_atual, lista_feriados):
-            dias_contados += 1
+        if eh_dia_util(data_atual, feriados):
+            dias_adicionados += 1
+    return data_atual
+
+def subtrair_dias_uteis(fim, dias, feriados):
+    data_atual = fim
+    dias_subtraidos = 0
+    
+    while dias_subtraidos < dias:
+        data_atual -= timedelta(days=1)
+        if eh_dia_util(data_atual, feriados):
+            dias_subtraidos += 1
     return data_atual
 
 # --- MOTOR DE CÁLCULO ---
-def calcular_simplex(inicio, cfg, feriados):
+def calcular_cronograma_150(data_entrada, feriados):
     cronograma = []
     
-    # 0. ENTRADA
+    # 1. DEFINIÇÃO DOS MARCOS GLOBAIS
+    # Data Limite: 150 dias úteis a contar da entrada (CPA: dia 1 é o seguinte)
+    data_limite_dia = somar_dias_uteis(data_entrada, 150, feriados)
+    
+    # PTF: 40 dias úteis ANTES da data limite
+    data_ptf = subtrair_dias_uteis(data_limite_dia, 40, feriados)
+    
+    # 2. CÁLCULO DAS FASES (Sequencial)
+    
+    # FASE 0: Entrada
     cronograma.append({
-        "Data": inicio,
-        "Etapa": "0. Entrada",
-        "Descrição": "Submissão do Pedido",
-        "Duração": "0 dias"
+        "Fase": "0. Entrada",
+        "Início": data_entrada,
+        "Fim": data_entrada,
+        "Duração": "0 dias",
+        "Obs": "Submissão"
     })
     
-    # 1. CONFORMIDADE (10 dias)
-    # A contagem começa no dia seguinte à entrada (regra geral CPA)
-    fim_conformidade = somar_dias_uteis(inicio, cfg['conf'], feriados)
-    
+    # FASE 1: Conformidade (30 dias úteis)
+    inicio_conf = proximo_dia_util(data_entrada + timedelta(days=1), feriados)
+    fim_conf = somar_dias_uteis(data_entrada, 30, feriados) # Conta 30 a partir da entrada
     cronograma.append({
-        "Data": inicio, # Visualmente aparece na data de início da fase
-        "Etapa": "1. Conformidade",
-        "Descrição": "Verificação Liminar da Instrução",
-        "Duração": f"{cfg['conf']} dias (Uteis)",
-        "Fim Previsto": fim_conformidade
+        "Fase": "1. Conformidade",
+        "Início": inicio_conf,
+        "Fim": fim_conf,
+        "Duração": "30 dias úteis",
+        "Obs": "Verificação e Declaração de Conformidade"
     })
     
-    # 2. CONSULTA PÚBLICA (35 dias)
-    # Inicia no dia útil seguinte ao fim da conformidade
-    inicio_cp = proximo_dia_util(fim_conformidade + timedelta(days=1), feriados)
-    fim_cp = somar_dias_uteis(inicio_cp, cfg['cp'], feriados)
-    
+    # FASE 2: Preparação Consulta (Est. 5 dias úteis)
+    inicio_prep = proximo_dia_util(fim_conf + timedelta(days=1), feriados)
+    fim_prep = somar_dias_uteis(inicio_prep, 5, feriados, )
     cronograma.append({
-        "Data": inicio_cp,
-        "Etapa": "2. Consulta Pública",
-        "Descrição": "Publicitação e Período de Consulta",
-        "Duração": f"{cfg['cp']} dias (Uteis)",
-        "Fim Previsto": fim_cp
+        "Fase": "2. Prep. Consulta Pública",
+        "Início": inicio_prep,
+        "Fim": fim_prep,
+        "Duração": "~5 dias úteis",
+        "Obs": "Publicação de Editais"
     })
     
-    # 3. PÓS-CONSULTA E DECISÃO (Restante até aos 150 dias globais, se aplicável)
-    # No Simplex, o foco é cumprir os parciais, mas vamos projetar o final.
-    # Prazo global do Art 19 pode ser 150 (geral) ou menos.
-    # Vamos assumir o cálculo sequencial para os passos seguintes.
-    
-    # Análise Técnica (ex: 20 dias após CP)
-    inicio_analise = proximo_dia_util(fim_cp + timedelta(days=1), feriados)
-    fim_analise = somar_dias_uteis(inicio_analise, 20, feriados) # Estimativa Simplex
-    
+    # FASE 3: Consulta Pública (30 dias úteis)
+    inicio_cp = proximo_dia_util(fim_prep + timedelta(days=1), feriados)
+    fim_cp = somar_dias_uteis(inicio_cp, 30, feriados) # Atenção: conta o próprio dia se for útil? CPA diz seguinte. Vamos somar 30.
     cronograma.append({
-        "Data": inicio_analise,
-        "Etapa": "3. Análise Técnica",
-        "Descrição": "Apreciação técnica e PTF",
-        "Duração": "20 dias (Estimado)",
-        "Fim Previsto": fim_analise
-    })
-
-    # Decisão Final (DIA) - Estimativa para fechar perto dos 100-120 dias no total Simplex
-    inicio_decisao = proximo_dia_util(fim_analise + timedelta(days=1), feriados)
-    fim_decisao = somar_dias_uteis(inicio_decisao, 15, feriados)
-    
-    cronograma.append({
-        "Data": fim_decisao,
-        "Etapa": "4. Decisão Final (DIA)",
-        "Descrição": "Emissão da DIA",
-        "Duração": "-",
-        "Fim Previsto": fim_decisao,
+        "Fase": "3. Consulta Pública",
+        "Início": inicio_cp,
+        "Fim": fim_cp,
+        "Duração": "30 dias úteis",
+        "Obs": "Participação pública (Mínimo legal)",
         "Destaque": True
     })
-
+    
+    # FASE 4: Análise Técnica (O intervalo)
+    # Começa depois da CP e acaba antes do PTF
+    inicio_analise = proximo_dia_util(fim_cp + timedelta(days=1), feriados)
+    fim_analise = subtrair_dias_uteis(data_ptf, 1, feriados)
+    
+    cronograma.append({
+        "Fase": "4. Análise Técnica",
+        "Início": inicio_analise,
+        "Fim": fim_analise,
+        "Duração": "Variável",
+        "Obs": "Avaliação e possíveis pedidos de Aditamentos",
+    })
+    
+    # FASE 5: PTF (Marco)
+    cronograma.append({
+        "Fase": "5. Proposta PTF",
+        "Início": data_ptf,
+        "Fim": data_ptf,
+        "Duração": "Marco",
+        "Obs": "40 dias antes da Decisão Final",
+        "Destaque": True
+    })
+    
+    # FASE 6: Audiência Prévia (10 dias)
+    inicio_aud = proximo_dia_util(data_ptf + timedelta(days=1), feriados)
+    fim_aud = somar_dias_uteis(inicio_aud, 10, feriados)
+    cronograma.append({
+        "Fase": "6. Audiência Prévia",
+        "Início": inicio_aud,
+        "Fim": fim_aud,
+        "Duração": "10 dias úteis",
+        "Obs": "CPA (Pronúncia do Promotor)"
+    })
+    
+    # FASE 7: Decisão (Marco Final)
+    cronograma.append({
+        "Fase": "7. Emissão da DIA",
+        "Início": data_limite_dia,
+        "Fim": data_limite_dia,
+        "Duração": "Marco",
+        "Obs": "Dia 150 (Limite Legal)",
+        "Destaque": True
+    })
+    
     return cronograma
 
 # --- INTERFACE ---
 with st.sidebar:
-    st.header("Parâmetros Simplex")
-    # DATA CORRIGIDA PARA O SEU EXEMPLO (03/06/2025)
-    data_entrada = st.date_input("Data de Entrada", date(2025, 6, 3))
+    st.header("Configuração")
+    # DATA FIXA DO SEU EXEMPLO
+    data_entrada = st.date_input("Data de Entrada", date(2025, 6, 6))
     
-    st.subheader("Durações (Dias Úteis)")
-    dias_conf = st.number_input("1. Conformidade", value=10, step=1)
-    dias_cp = st.number_input("2. Consulta Pública", value=35, step=1)
-    
-    st.markdown("---")
-    st.caption("O Simplex (DL 11/2023) reduz conformidade para 10 dias e ajusta a CP.")
+    st.info("""
+    **Parâmetros:**
+    * Prazo Global: 150 dias úteis
+    * Feriados: Nacionais (Portugal)
+    * Cálculo PTF: Regressivo
+    """)
 
 # Execução
 anos = [data_entrada.year, data_entrada.year + 1]
 feriados = obter_feriados(anos)
 
-# Ajuste se entrada for feriado/fds
+# Aviso de Fim de Semana
+aviso = ""
 if not eh_dia_util(data_entrada, feriados):
-    st.warning("A data de entrada selecionada não é um dia útil.")
+    aviso = "⚠️ A data selecionada é fim de semana/feriado. A contagem inicia no 1º dia útil seguinte."
 
-if st.button("Calcular Cronograma Simplex", type="primary"):
+if st.button("Calcular Cronograma", type="primary"):
+    if aviso: st.warning(aviso)
     
-    cfg = {'conf': dias_conf, 'cp': dias_cp}
-    dados = calcular_simplex(data_entrada, cfg, feriados)
+    dados = calcular_cronograma_150(data_entrada, feriados)
     
-    # Exibir como o seu exemplo de texto
-    st.subheader("2. Detalhe das Etapas (Simulação)")
-    
-    for etapa in dados:
-        cor = "blue" if "Conformidade" in etapa['Etapa'] else "green" if "Consulta" in etapa['Etapa'] else "black"
-        bg = "#f0f2f6"
-        
-        if etapa.get("Destaque"):
-            bg = "#ffebee"
-            cor = "red"
-            
-        data_show = etapa['Data'].strftime('%d/%m/%Y')
-        
-        with st.container():
-            st.markdown(f"""
-            <div style="background-color: {bg}; padding: 10px; border-radius: 5px; margin-bottom: 10px; border-left: 5px solid {cor}">
-                <strong>{data_show} - {etapa['Etapa']}</strong><br>
-                <span style="color: #555;">Descrição: {etapa['Descrição']}</span><br>
-                <span style="color: #555;">Duração considerada: <strong>{etapa['Duração']}</strong></span>
-            </div>
-            """, unsafe_allow_html=True)
-            
-            # Se quiser mostrar a data de fim da etapa também
-            if "Fim Previsto" in etapa and etapa['Etapa'] != "0. Entrada" and not etapa.get("Destaque"):
-                st.caption(f"Termina a: {etapa['Fim Previsto'].strftime('%d/%m/%Y')}")
-
-    # Tabela Simples para Download
+    # DATAFRAME
     df = pd.DataFrame(dados)
-    df['Data'] = df['Data'].apply(lambda x: x.strftime('%d/%m/%Y'))
-    if 'Fim Previsto' in df.columns:
-        df['Fim Previsto'] = df['Fim Previsto'].apply(lambda x: x.strftime('%d/%m/%Y') if not pd.isnull(x) else "")
     
-    st.divider()
-    # Excel Download
+    # FORMATAR DATAS PARA STRING
+    df_show = df.copy()
+    df_show['Início'] = df_show['Início'].apply(lambda x: x.strftime('%d/%m/%Y'))
+    df_show['Fim'] = df_show['Fim'].apply(lambda x: x.strftime('%d/%m/%Y'))
+    
+    # Remove coluna Destaque para exibição
+    cols_to_show = ['Fase', 'Início', 'Fim', 'Duração', 'Obs']
+    
+    # VISUALIZAÇÃO
+    st.subheader(f"Cronograma Estimado (Entrada: {data_entrada.strftime('%d/%m/%Y')})")
+    
+    # Estilização da Tabela
+    def highlight_rows(row):
+        if row.get('Destaque'):
+            return ['background-color: #e3f2fd; font-weight: bold'] * len(row)
+        if "Análise Técnica" in row['Fase']:
+            return ['background-color: #fff3e0'] * len(row) # Laranja claro
+        return [''] * len(row)
+
+    st.dataframe(
+        df_show[cols_to_show].style.apply(highlight_rows, axis=1), 
+        use_container_width=True,
+        hide_index=True
+    )
+    
+    # EXCEL DOWNLOAD
     buffer = io.BytesIO()
     with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
-        df.to_excel(writer, index=False)
-        
-    st.download_button("📥 Baixar Tabela Excel", buffer, "Cronograma_Simplex.xlsx")
+        df_show.drop(columns=['Destaque'], errors='ignore').to_excel(writer, index=False)
+    
+    st.download_button("📥 Baixar Excel", buffer, "Cronograma_150dias.xlsx")
+    
+    # VISUALIZAÇÃO TEXTUAL RÁPIDA
+    st.divider()
+    c1, c2, c3 = st.columns(3)
+    
+    # Extrair datas chave
+    dia_ptf = df[df['Fase'] == '5. Proposta PTF']['Início'].values[0]
+    dia_fim = df[df['Fase'] == '7. Emissão da DIA']['Início'].values[0]
+    dia_conf = df[df['Fase'] == '1. Conformidade']['Fim'].values[0]
+    
+    c1.metric("Fim Conformidade", pd.to_datetime(dia_conf).strftime('%d/%m/%Y'))
+    c2.metric("Proposta PTF", pd.to_datetime(dia_ptf).strftime('%d/%m/%Y'), delta="Conta de trás para a frente")
+    c3.metric("Data Limite (DIA)", pd.to_datetime(dia_fim).strftime('%d/%m/%Y'), delta="Dia 150")
+
+    # VERIFICAÇÃO DE FERIADOS
+    with st.expander("Ver Feriados Considerados"):
+        feriados_range = [f for f in feriados if data_entrada <= f <= pd.to_datetime(dia_fim).date()]
+        for f in sorted(feriados_range):
+            st.write(f"- {f.strftime('%d/%m/%Y')} ({f.strftime('%A')})")
