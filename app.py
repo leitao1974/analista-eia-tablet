@@ -1,298 +1,260 @@
 import streamlit as st
-from pypdf import PdfReader
+import pandas as pd
+import datetime
+from datetime import timedelta, date
+import holidays
+import io
 from docx import Document
 from docx.shared import Pt, RGBColor
-from docx.enum.text import WD_ALIGN_PARAGRAPH
-import google.generativeai as genai
-import io
-from datetime import datetime
-import re
-import time
 
-# --- Configuração ---
-st.set_page_config(page_title="Analista EIA", page_icon="⚖️", layout="wide")
+# --- CONFIGURAÇÃO DA PÁGINA ---
+st.set_page_config(page_title="Simulador AIA (Calibrado)", page_icon="📊", layout="wide")
 
-if 'uploader_key' not in st.session_state:
-    st.session_state.uploader_key = 0
+st.title("📊 Simulador de Prazos AIA (Calibrado c/ Excel)")
+st.markdown("""
+Modelo afinado com base nos dados reais do ficheiro **Processo_PrazosV6**.
+Define marcos intermédios críticos: **Envio do PTF** e **Início da Audiência de Interessados**.
+""")
 
-def reset_app():
-    st.session_state.uploader_key += 1
+# --- FUNÇÕES UTILITÁRIAS ---
+def obter_feriados_pt(anos):
+    return holidays.PT(years=anos)
 
-# ==========================================
-# --- 1. BASE DE DADOS LEGISLATIVA (RJAIA COMPLETO) ---
-# ==========================================
+def eh_dia_util(data_check, lista_feriados):
+    if data_check.weekday() >= 5: return False
+    if data_check in lista_feriados: return False
+    return True
 
-# Leis Transversais (Aplicam-se a tudo)
-COMMON_LAWS = {
-    "RJAIA (DL 151-B/2013)": "https://diariodarepublica.pt/dr/legislacao-consolidada/decreto-lei/2013-116043164",
-    "REDE NATURA (DL 140/99)": "https://diariodarepublica.pt/dr/legislacao-consolidada/decreto-lei/1999-34460975",
-    "RUÍDO (RGR - DL 9/2007)": "https://diariodarepublica.pt/dr/legislacao-consolidada/decreto-lei/2007-34526556",
-    "ÁGUA (Lei 58/2005)": "https://diariodarepublica.pt/dr/legislacao-consolidada/lei/2005-34563267"
-}
+def proximo_dia_util(data_ref, lista_feriados):
+    data_calc = data_ref
+    while not eh_dia_util(data_calc, lista_feriados):
+        data_calc += timedelta(days=1)
+    return data_calc
 
-# Leis Específicas por Setor (Baseado nos Anexos do RJAIA)
-SPECIFIC_LAWS = {
-    "1. Agricultura, Silvicultura e Aquicultura": {
-        "ATIVIDADE PECUÁRIA (NREAP)": "https://diariodarepublica.pt/dr/legislacao-consolidada/decreto-lei/2008-34480678",
-        "GESTÃO EFLUENTES (Port. 631/2009)": "https://diariodarepublica.pt/dr/detalhe/portaria/631-2009-518868",
-        "FLORESTAS (DL 16/2009 - PGF)": "https://diariodarepublica.pt/dr/legislacao-consolidada/decreto-lei/2009-34488356"
+def somar_dias_uteis(data_inicio, dias_a_adicionar, lista_feriados):
+    data_atual = data_inicio
+    dias_adicionados = 0
+    while dias_adicionados < dias_a_adicionar:
+        data_atual += timedelta(days=1)
+        if eh_dia_util(data_atual, lista_feriados):
+            dias_adicionados += 1
+    return data_atual
+
+# --- REGRAS CALIBRADAS (COM BASE NO SEU EXCEL) ---
+# A lógica aqui é: Conformidade + Prep CP + CP + (Analise Técnica) = Data PTF
+# Depois: Data PTF + (Revisão) = Data Audiência
+# Depois: Data Audiência + 10 dias CPA + (Decisão) = Data Final
+REGRAS = {
+    "Cenário Geral (150 Dias)": {
+        "prazo_global": 150,
+        "fase_conformidade": 30,      # Excel: Limite Conformidade (30 dias)
+        "prep_cp": 5,                 # Excel: Até 5 dias após conf.
+        "consulta_publica": 30,       # Lei
+        "analise_pos_cp": 20,         # Ajuste para bater no Dia 85 (Envio PTF)
+        "revisao_interna": 15,        # Ajuste para bater no Dia 100 (Início Audiência)
+        "audiencia_prazo": 10,        # CPA
+        "prazo_final_decisao": 40,    # O que sobra para o Dia 150
+        "desc": "Projetos Infraestruturas/Serviços. Marcos: PTF ao dia 85; Audiência ao dia 100."
     },
-    "2. Indústria Extrativa (Minas e Pedreiras)": {
-        "MASSAS MINERAIS (DL 270/2001)": "https://diariodarepublica.pt/dr/legislacao-consolidada/decreto-lei/2001-34449875",
-        "RESÍDUOS DE EXTRAÇÃO (DL 10/2010)": "https://diariodarepublica.pt/dr/legislacao-consolidada/decreto-lei/2010-34658745",
-        "SEGURANÇA MINAS (DL 162/90)": "https://diariodarepublica.pt/dr/detalhe/decreto-lei/162-1990-417937"
-    },
-    "3. Indústria Energética": {
-        "SISTEMA ELÉTRICO (DL 15/2022)": "https://diariodarepublica.pt/dr/legislacao-consolidada/decreto-lei/2022-177343687",
-        "EMISSÕES INDUSTRIAIS (DL 127/2013)": "https://diariodarepublica.pt/dr/legislacao-consolidada/decreto-lei/2013-34789569",
-        "REFINAÇÃO/COMBUSTÍVEIS": "https://diariodarepublica.pt/dr/legislacao-consolidada/decreto-lei/2012-34589012"
-    },
-    "4. Produção e Transformação de Metais": {
-        "EMISSÕES INDUSTRIAIS (DL 127/2013)": "https://diariodarepublica.pt/dr/legislacao-consolidada/decreto-lei/2013-34789569",
-        "LICENCIAMENTO INDUSTRIAL (SIR)": "https://diariodarepublica.pt/dr/legislacao-consolidada/decreto-lei/2015-106567543"
-    },
-    "5. Indústria Mineral e Química": {
-        "PREVENÇÃO ACIDENTES GRAVES (SEVESO - DL 150/2015)": "https://diariodarepublica.pt/dr/legislacao-consolidada/decreto-lei/2015-106558967",
-        "EMISSÕES (DL 127/2013)": "https://diariodarepublica.pt/dr/legislacao-consolidada/decreto-lei/2013-34789569"
-    },
-    "6. Infraestruturas (Rodovias, Ferrovias, Aeroportos)": {
-        "ESTATUTO ESTRADAS (Lei 34/2015)": "https://diariodarepublica.pt/dr/legislacao-consolidada/lei/2015-34585678",
-        "SERVIDÕES AERONÁUTICAS (DL 48/2022)": "https://diariodarepublica.pt/dr/detalhe/decreto-lei/48-2022-185799345",
-        "RUÍDO GRANDES INFRAESTRUTURAS": "https://diariodarepublica.pt/dr/legislacao-consolidada/decreto-lei/2007-34526556"
-    },
-    "7. Projetos de Engenharia Hidráulica (Barragens, Portos)": {
-        "SEGURANÇA BARRAGENS (DL 21/2018)": "https://diariodarepublica.pt/dr/legislacao-consolidada/decreto-lei/2018-114833256",
-        "DOMÍNIO HÍDRICO (Lei 54/2005)": "https://diariodarepublica.pt/dr/legislacao-consolidada/lei/2005-34563267"
-    },
-    "8. Tratamento de Resíduos e Águas Residuais": {
-        "RESÍDUOS (RGGR - DL 102-D/2020)": "https://diariodarepublica.pt/dr/legislacao-consolidada/decreto-lei/2020-150917243",
-        "ÁGUAS RESIDUAIS URBANAS (DL 152/97)": "https://diariodarepublica.pt/dr/legislacao-consolidada/decreto-lei/1997-34512345",
-        "ATERROS (DL 102-D/2020)": "https://diariodarepublica.pt/dr/legislacao-consolidada/decreto-lei/2020-150917243"
-    },
-    "9. Projetos Urbanos, Turísticos e Outros": {
-        "RJUE (Urbanização - DL 555/99)": "https://diariodarepublica.pt/dr/legislacao-consolidada/decreto-lei/1999-34563452",
-        "EMPREENDIMENTOS TURÍSTICOS (RJET)": "https://diariodarepublica.pt/dr/legislacao-consolidada/decreto-lei/2008-34460567",
-        "ACESSIBILIDADES (DL 163/2006)": "https://diariodarepublica.pt/dr/legislacao-consolidada/decreto-lei/2006-34524456"
+    "Cenário Indústria/PIN (90 Dias)": {
+        "prazo_global": 90,
+        "fase_conformidade": 20,      # Excel: Limite Conformidade (20 dias)
+        "prep_cp": 5,
+        "consulta_publica": 30,
+        "analise_pos_cp": 10,         # Ajuste para bater no Dia 65 (Envio PTF)
+        "revisao_interna": 5,         # Ajuste para bater no Dia 70 (Início Audiência)
+        "audiencia_prazo": 10,
+        "prazo_final_decisao": 10,    # O que sobra para o Dia 90
+        "desc": "Projetos SIR/PIN. Marcos: PTF ao dia 65; Audiência ao dia 70."
     }
 }
 
-# ==========================================
-# --- 2. INTERFACE E LÓGICA ---
-# ==========================================
-
-st.title("⚖️ Analista EIA Pro (Todas as Tipologias RJAIA)")
-st.markdown("Auditoria Técnica e Legal adaptada aos setores definidos nos Anexos I e II do DL 151-B/2013.")
-
-with st.sidebar:
-    st.header("🔐 1. Configuração")
-    api_key = st.text_input("Google API Key", type="password")
-    
-    selected_model = None
-    if api_key:
-        try:
-            genai.configure(api_key=api_key)
-            models_list = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
-            if models_list:
-                st.success(f"Chave válida!")
-                index_flash = next((i for i, m in enumerate(models_list) if 'flash' in m), 0)
-                selected_model = st.selectbox("Modelo IA:", models_list, index=index_flash)
-            else:
-                st.error("Chave válida mas sem modelos.")
-        except:
-            st.error("Chave inválida.")
-
-    st.divider()
-    
-    # SELEÇÃO DA TIPOLOGIA (Lista Completa)
-    st.header("🏗️ 2. Tipologia (Anexos RJAIA)")
-    project_type = st.selectbox(
-        "Selecione o setor de atividade:",
-        list(SPECIFIC_LAWS.keys()) + ["Outra Tipologia"]
-    )
-    
-    # Construção dinâmica da lista de leis
-    active_laws = COMMON_LAWS.copy() 
-    if project_type in SPECIFIC_LAWS:
-        active_laws.update(SPECIFIC_LAWS[project_type])
-        st.caption(f"✅ Legislação específica carregada.")
-        with st.expander("Ver leis aplicáveis"):
-            st.write(active_laws)
-
-uploaded_file = st.file_uploader("Carregue o PDF", type=['pdf'], key=f"uploader_{st.session_state.uploader_key}")
-
-legal_context_str = "\n".join([f"- {k}: {v}" for k, v in active_laws.items()])
-
-# --- PROMPT ---
-default_prompt = f"""
-Atua como Perito Sénior em Engenharia do Ambiente e Jurista.
-Realiza uma auditoria técnica e legal ao EIA de um projeto do setor: {project_type.upper()}.
-
-CONTEXTO LEGISLATIVO (Prioritário):
-{legal_context_str}
-
-REGRAS DE FORMATAÇÃO:
-1. "Sentence case" apenas. PROIBIDO MAIÚSCULAS em frases inteiras.
-2. Não uses negrito (`**`) nas conclusões.
-
-Estrutura o relatório EXATAMENTE nestes 7 Capítulos:
-
-## 1. ENQUADRAMENTO LEGAL E CONFORMIDADE
-   - O projeto enquadra-se corretamente no RJAIA (Anexo I ou II)?
-   - Verifica o cumprimento da legislação específica listada acima.
-
-## 2. PRINCIPAIS IMPACTES (Técnico)
-   - Análise por descritor ambiental.
-
-## 3. MEDIDAS DE MITIGAÇÃO PROPOSTAS
-   - Lista as medidas.
-
-## 4. ANÁLISE CRÍTICA E BENCHMARKING
-   - As medidas são suficientes face à lei e melhores práticas do setor {project_type}?
-   - Identifica lacunas legais.
-
-## 5. FUNDAMENTAÇÃO (Pág. X)
-
-## 6. CITAÇÕES RELEVANTES
-
-## 7. CONCLUSÕES
-   - Parecer Final fundamentado.
-
-Tom: Formal, Técnico e Jurídico.
-"""
-instructions = st.text_area("Instruções:", value=default_prompt, height=300)
-
-# ==========================================
-# --- 3. FUNÇÕES TÉCNICAS (LIMPEZA E WORD) ---
-# ==========================================
-
-def extract_text_pypdf(file):
-    text = ""
-    try:
-        reader = PdfReader(file)
-        for i, page in enumerate(reader.pages):
-            content = page.extract_text()
-            if content:
-                text += f"\n\n--- PÁGINA {i+1} ---\n{content}"
-    except Exception as e:
-        return f"ERRO: {str(e)}"
-    return text
-
-def analyze_ai(text, prompt, key, model_name):
-    try:
-        genai.configure(api_key=key)
-        model = genai.GenerativeModel(model_name)
-        safe_text = text[:800000]
-        response = model.generate_content(f"{prompt}\n\nDADOS DO PDF:\n{safe_text}")
-        return response.text
-    except Exception as e:
-        return f"Erro IA: {str(e)}"
-
-def clean_ai_formatting(text):
-    text = text.replace('**', '') 
-    if len(text) > 40 and text.isupper():
-        return text.capitalize()
-    words = text.split()
-    if len(words) > 6:
-        upper_starts = sum(1 for w in words if w and w[0].isupper())
-        if upper_starts / len(words) > 0.7:
-            return text.capitalize()
-    return text
-
-# Helpers Word
-def format_bold_runs(paragraph, text):
-    parts = re.split(r'(\*\*.*?\*\*)', text)
-    for part in parts:
-        if part.startswith('**') and part.endswith('**'):
-            run = paragraph.add_run(part[2:-2])
-            run.bold = True
-        else:
-            paragraph.add_run(part)
-
-def parse_markdown_to_docx(doc, markdown_text):
-    in_critical_section = False
-    for line in markdown_text.split('\n'):
-        line = line.strip()
-        if not line: continue
-        
-        if line.startswith('## ') or re.match(r'^\d+\.\s', line):
-            clean = re.sub(r'^(##\s|\d+\.\s)', '', line).replace('*', '')
-            doc.add_heading(clean.title(), level=1)
-            if "CITAÇÕES" in clean.upper() or "CONCLUSÕES" in clean.upper():
-                in_critical_section = True
-            else:
-                in_critical_section = False
-        elif line.startswith('### '):
-            clean = line[4:].replace('*', '')
-            doc.add_heading(clean, level=2)
-        elif line.startswith('- ') or line.startswith('* '):
-            p = doc.add_paragraph(style='List Bullet')
-            clean_line = line[2:]
-            if in_critical_section:
-                p.add_run(clean_ai_formatting(clean_line))
-            else:
-                format_bold_runs(p, clean_line)
-        else:
-            p = doc.add_paragraph()
-            if in_critical_section:
-                p.add_run(clean_ai_formatting(line))
-            else:
-                format_bold_runs(p, line)
-
-def create_professional_word_doc(content, legal_links, project_type):
+# --- GERADOR DE RELATÓRIO WORD ---
+def gerar_relatorio_word(cronograma, nome_projeto, regra_nome, data_final):
     doc = Document()
-    style_normal = doc.styles['Normal']
-    style_normal.font.name = 'Calibri'
-    style_normal.font.size = Pt(11)
+    style = doc.styles['Title']
+    style.font.size = Pt(16)
     
-    style_h1 = doc.styles['Heading 1']
-    style_h1.font.name = 'Cambria'
-    style_h1.font.size = Pt(14)
-    style_h1.font.bold = True
-    style_h1.font.color.rgb = RGBColor(0, 51, 102)
-
-    title = doc.add_heading(f'PARECER TÉCNICO EIA', 0)
-    title.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    doc.add_paragraph(f'Setor: {project_type}').alignment = WD_ALIGN_PARAGRAPH.CENTER
-    doc.add_paragraph(f'Data: {datetime.now().strftime("%d/%m/%Y")}').alignment = WD_ALIGN_PARAGRAPH.CENTER
-    doc.add_paragraph('---')
-
-    parse_markdown_to_docx(doc, content)
+    doc.add_heading(f'Cronograma AIA: {nome_projeto}', 0)
+    doc.add_paragraph(f"Cenário Base: {regra_nome}")
     
-    doc.add_page_break()
-    doc.add_heading('ANEXO: Legislação Aplicável (Links DRE)', level=1)
+    p = doc.add_paragraph()
+    run = p.add_run(f"DATA LIMITE PREVISTA: {data_final}")
+    run.bold = True
+    run.font.color.rgb = RGBColor(200, 0, 0)
     
-    for name, url in legal_links.items():
-        p = doc.add_paragraph(style='List Bullet')
-        p.add_run(name + ": ").bold = True
-        run = p.add_run(url)
-        run.font.color.rgb = RGBColor(0, 0, 255)
-        run.font.underline = True
+    # Tabela no Word
+    table = doc.add_table(rows=1, cols=4)
+    table.style = 'Table Grid'
+    hdr_cells = table.rows[0].cells
+    hdr_cells[0].text = 'Data'
+    hdr_cells[1].text = 'Dia (Admin)'
+    hdr_cells[2].text = 'Fase'
+    hdr_cells[3].text = 'Responsável'
+    
+    for item in cronograma:
+        row_cells = table.add_row().cells
+        row_cells[0].text = item['Data Estimada'].strftime('%d/%m/%Y')
+        row_cells[1].text = str(item['Dia Admin'])
+        row_cells[2].text = item['Fase']
+        row_cells[3].text = item['Responsável']
+        
+    doc.add_paragraph("\nNota: Os prazos indicados como 'SUSPENSO' referem-se a períodos da responsabilidade do proponente ou trâmites externos.")
+    return doc
 
-    bio = io.BytesIO()
-    doc.save(bio)
-    return bio
+# --- MOTOR DE CÁLCULO ---
+def calcular_cronograma(data_inicio, regra, dias_suspensao, feriados):
+    cronograma = []
+    data_atual = data_inicio
+    dias_admin = 0
+    
+    # Função interna de registo
+    def add_line(fase, resp, desc, dias, tipo="UTIL", destaque=False):
+        nonlocal data_atual, dias_admin
+        
+        cronograma.append({
+            "Data Estimada": data_atual,
+            "Dia Admin": dias_admin if resp != "PROMOTOR" else "SUSPENSO",
+            "Fase": fase,
+            "Responsável": resp,
+            "Descrição": desc,
+            "Duração": f"{dias} dias ({'Uteis' if tipo=='UTIL' else 'Corridos'})",
+            "Destaque": destaque
+        })
+        
+        if tipo == "UTIL":
+            data_atual = somar_dias_uteis(data_atual, dias, feriados)
+            if resp != "PROMOTOR": dias_admin += dias
+        else:
+            data_fim = data_atual + timedelta(days=dias)
+            data_atual = proximo_dia_util(data_fim, feriados)
 
-# --- BOTÃO ---
-st.markdown("---")
+    # --- EXECUÇÃO PASSO A PASSO (Igual ao Excel) ---
+    
+    # 0. Início
+    add_line("0. Entrada", "Promotor", "Submissão", 0)
+    
+    # 1. Conformidade (Calibrado: 30 ou 20 dias)
+    add_line("1. Conformidade", "Autoridade", "Instrução e Reunião CA", regra['fase_conformidade'])
+    
+    # 2. Prep CP
+    add_line("2. Prep. CP", "Autoridade", "Até 5 dias após conformidade", regra['prep_cp'])
+    
+    # 3. Consulta Pública
+    add_line("3. Consulta Pública", "Autoridade", "Período Legal", regra['consulta_publica'])
+    
+    # 4. Suspensão (Aditamentos) - Inserida aqui por ser o padrão, mas ajustável
+    add_line("4. Suspensão (Aditamentos)", "PROMOTOR", "Resposta a Pedido de Elementos", dias_suspensao, tipo="CORRIDO")
+    
+    # 5. Análise Técnica (Até ao PTF)
+    # A soma até aqui deve dar o dia do PTF (85 ou 65)
+    add_line("5. Análise Técnica", "Comissão", "Análise Pós-CP", regra['analise_pos_cp'])
+    
+    # MARCO: ENVIO DO PTF
+    target_ptf = 85 if regra['prazo_global'] == 150 else 65
+    cronograma.append({
+        "Data Estimada": data_atual, 
+        "Dia Admin": dias_admin, 
+        "Fase": f"🎯 MARCO: ENVIO PTF (Dia {dias_admin})", 
+        "Responsável": "Comissão", 
+        "Descrição": f"Meta do Excel: Dia {target_ptf}", 
+        "Duração": "-", "Destaque": True
+    })
+    
+    # 6. Revisão Interna (Até à Audiência)
+    add_line("6. Validação PTF", "Autoridade", "Validação Interna", regra['revisao_interna'])
+    
+    # MARCO: AUDIÊNCIA
+    target_aud = 100 if regra['prazo_global'] == 150 else 70
+    cronograma.append({
+        "Data Estimada": data_atual, 
+        "Dia Admin": dias_admin, 
+        "Fase": f"📢 MARCO: AUDIÊNCIA (Dia {dias_admin})", 
+        "Responsável": "Autoridade", 
+        "Descrição": f"Meta do Excel: Dia {target_aud}", 
+        "Duração": "-", "Destaque": True
+    })
+    
+    # 7. Audiência Prévia (Suspensão Admin)
+    # Nota: No seu Excel, a Audiência conta para os dias úteis globais (linha 16: "Audiência de interessados (100 dias)").
+    # Mas juridicamente o CPA suspende a decisão. Vou manter a contagem de prazo global para bater com os 150/90,
+    # mas marcando como fase de interação com promotor.
+    add_line("7. Audiência Prévia", "PROMOTOR", "Prazo CPA (10 dias)", regra['audiencia_prazo'], tipo="UTIL")
+    
+    # 8. Decisão Final
+    add_line("8. Emissão da DIA", "Autoridade", "Assinatura e Publicação", regra['prazo_final_decisao'])
+    
+    return cronograma, data_atual
 
-if st.button("🚀 Gerar Relatório", type="primary", use_container_width=True):
-    if not api_key:
-        st.error("⚠️ Insira a API Key.")
-    elif not selected_model:
-        st.error("⚠️ Nenhum modelo selecionado.")
-    elif not uploaded_file:
-        st.warning("⚠️ Carregue o PDF.")
-    else:
-        with st.spinner(f"A processar EIA de {project_type}..."):
-            pdf_text = extract_text_pypdf(uploaded_file)
-            result = analyze_ai(pdf_text, instructions, api_key, selected_model)
-            
-            if "Erro" in result and len(result) < 200:
-                st.error(result)
-            else:
-                st.success("✅ Sucesso!")
-                with st.expander("Ver Texto"):
-                    st.write(result)
-                word_file = create_professional_word_doc(result, active_laws, project_type)
-                st.download_button("⬇️ Download Word", word_file.getvalue(), f"Parecer_EIA.docx", on_click=reset_app, type="primary")
+# ==============================================================================
+# INTERFACE
+# ==============================================================================
+with st.sidebar:
+    st.header("1. Configuração")
+    data_entrada = st.date_input("Data de Entrada", date.today())
+    
+    tipo_cenario = st.selectbox("Tipologia", list(REGRAS.keys()))
+    regra_escolhida = REGRAS[tipo_cenario]
+    st.caption(regra_escolhida['desc'])
+    
+    st.header("2. Suspensões")
+    dias_suspensao = st.number_input("Dias de Resposta (Promotor)", value=45, min_value=0)
 
+# ==============================================================================
+# EXECUÇÃO
+# ==============================================================================
+anos = [data_entrada.year + i for i in range(3)]
+feriados = obter_feriados_pt(anos)
+
+if not eh_dia_util(data_entrada, feriados):
+    data_inicio = proximo_dia_util(data_entrada, feriados)
+    st.warning(f"⚠️ Data de entrada ajustada para dia útil: {data_inicio.strftime('%d/%m/%Y')}")
+else:
+    data_inicio = data_entrada
+
+if st.button("Calcular com Calibragem Excel", type="primary"):
+    
+    cronograma, data_final = calcular_cronograma(data_inicio, regra_escolhida, dias_suspensao, feriados)
+    
+    # --- MÉTRICAS ---
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Data Limite DIA", data_final.strftime("%d/%m/%Y"))
+    c2.metric("Prazo Admin", f"{regra_escolhida['prazo_global']} dias úteis")
+    c3.metric("Suspensão Promotor", f"{dias_suspensao} dias corridos")
+    
+    # --- TABELA VISUAL ---
+    df = pd.DataFrame(cronograma)
+    
+    # Formatação Visual da Tabela
+    def highlight_milestones(row):
+        if row['Destaque'] == True:
+            return ['background-color: #d1e7dd; font-weight: bold'] * len(row)
+        if "Suspensão" in row['Fase']:
+            return ['background-color: #fff3cd'] * len(row)
+        if "Emissão da DIA" in row['Fase']:
+            return ['background-color: #f8d7da; font-weight: bold'] * len(row)
+        return [''] * len(row)
+
+    # Preparar DF para display (remover colunas técnicas)
+    df_show = df.drop(columns=['Destaque'])
+    df_show['Data Estimada'] = df_show['Data Estimada'].apply(lambda x: x.strftime("%d/%m/%Y"))
+    
+    st.table(df_show.style.apply(highlight_milestones, axis=1))
+    
+    # --- DOWNLOADS ---
+    col1, col2 = st.columns(2)
+    
+    # Excel
+    buffer_xls = io.BytesIO()
+    with pd.ExcelWriter(buffer_xls, engine='xlsxwriter') as writer:
+        df_show.to_excel(writer, index=False)
+    with col1:
+        st.download_button("📥 Baixar Excel", buffer_xls, "Cronograma_Calibrado.xlsx")
+        
+    # Word
+    doc = gerar_relatorio_word(cronograma, "Projeto AIA", tipo_cenario, data_final.strftime("%d/%m/%Y"))
+    buffer_word = io.BytesIO()
+    doc.save(buffer_word)
+    buffer_word.seek(0)
+    with col2:
+        st.download_button("📄 Baixar Relatório", buffer_word, "Relatorio.docx")
