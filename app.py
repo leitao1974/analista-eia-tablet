@@ -1,50 +1,77 @@
+import streamlit as st
 import pandas as pd
 import numpy as np
+from datetime import date
 
-# --- CONFIGURAÇÕES ---
-DATA_INICIAL = "2025-06-03"
-PRAZO_DIAS_UTEIS = 150
+# Configuração da Página
+st.set_page_config(page_title="Calculadora AIA", layout="centered")
 
-# Feriados Nacionais Portugueses (apenas os que impactam dias úteis neste intervalo)
-feriados_pt = [
-    "2025-06-10", # Dia de Portugal (Terça)
-    "2025-06-19", # Corpo de Deus (Quinta)
-    "2025-08-15", # Assunção N. Sra (Sexta)
-    "2025-10-05", # Implantação (Domingo - irrelevante p/ cálculo mas listado)
-    "2025-11-01", # Todos os Santos (Sábado - irrelevante p/ cálculo mas listado)
-    "2025-12-01", # Restauração (Segunda)
-    "2025-12-08", # Imaculada Conceição (Segunda)
-    "2025-12-25", # Natal (Quinta)
-    "2026-01-01", # Ano Novo (Quinta)
+st.title("Calculadora de Prazos AIA")
+st.warning("⚠️ Modo Estrito: Apenas Dias Úteis (Sem Férias Judiciais)")
+
+# --- 1. ENTRADAS (INPUTS) ---
+col1, col2 = st.columns(2)
+
+with col1:
+    # Fixamos o valor default em 03/06/2025 conforme o seu caso real
+    data_inicial = st.date_input("Data Inicial", value=date(2025, 6, 3))
+
+with col2:
+    prazo = st.number_input("Prazo (dias)", value=150, step=1)
+
+# --- 2. DEFINIÇÃO DOS FERIADOS (Apenas os dias vermelhos) ---
+# Se houver algum intervalo (tipo range de natal) aqui, REMOVA.
+# Abaixo estão APENAS os feriados nacionais pontuais.
+feriados_list = [
+    "2025-06-10", # Dia de Portugal
+    "2025-06-19", # Corpo de Deus
+    "2025-08-15", # Assunção
+    "2025-10-05", # Implantação (Domingo)
+    "2025-11-01", # Todos os Santos (Sábado)
+    "2025-12-01", # Restauração
+    "2025-12-08", # Imaculada Conceição
+    "2025-12-25", # Natal (Apenas o dia 25!)
+    "2026-01-01", # Ano Novo (Apenas o dia 1!)
+    "2026-04-03"  # Sexta-feira Santa (exemplo futuro)
 ]
 
-# Converter feriados para formato datetime do numpy
-feriados = np.array(feriados_pt, dtype='datetime64[D]')
+# Converter para formato numpy
+feriados_np = np.array(feriados_list, dtype='datetime64[D]')
 
-# --- CÁLCULO ---
-def calcular_fim_prazo_aia(inicio, dias, feriados_lista):
-    # Data inicial
-    start = np.datetime64(inicio)
+# --- 3. CÁLCULO DIRETO (SEM SUSPENSÕES) ---
+# A função busday_offset conta dias úteis saltando APENAS fins de semana e a lista acima.
+try:
+    data_final_np = np.busday_offset(
+        np.datetime64(data_inicial), 
+        prazo, 
+        roll='forward', 
+        weekmask='1111100', 
+        holidays=feriados_np
+    )
+    data_final = pd.to_datetime(data_final_np)
     
-    # busday_offset calcula dias úteis. 
-    # weekmask='1111100' define Seg-Sex como úteis.
-    # roll='forward' garante que se começar num feriado, avança.
-    fim = np.busday_offset(start, dias, roll='forward', weekmask='1111100', holidays=feriados_lista)
-    
-    return pd.to_datetime(fim)
+except Exception as e:
+    st.error(f"Erro no cálculo: {e}")
+    st.stop()
 
-data_final = calcular_fim_prazo_aia(DATA_INICIAL, PRAZO_DIAS_UTEIS, feriados)
+# --- 4. RESULTADO ---
+st.divider()
 
-# --- RELATÓRIO FINAL ---
-print(f"--- RELATÓRIO PROCESSO AIA ---")
-print(f"Início do Prazo:      {pd.to_datetime(DATA_INICIAL).strftime('%d/%m/%Y')}")
-print(f"Duração (Dias Úteis): {PRAZO_DIAS_UTEIS}")
-print(f"Suspensões Judiciais: NÃO APLICÁVEL (Regime AIA)")
-print("-" * 30)
-print(f"Data Final Calculada: {data_final.strftime('%d/%m/%Y')}")
+col_res1, col_res2 = st.columns(2)
 
-# Verificação
-if data_final.strftime('%d/%m/%Y') == "08/01/2026":
-    print("✅ STATUS: O cálculo bate certo com 08/01/2026.")
-else:
-    print("❌ STATUS: Divergência encontrada.")
+with col_res1:
+    st.metric(label="Data Final Calculada", value=data_final.strftime("%d/%m/%Y"))
+
+with col_res2:
+    # Verificação de Prova
+    if data_final.strftime("%d/%m/%Y") == "08/01/2026":
+        st.success("✅ O valor está CORRETO (08/01/2026)")
+    elif data_final.strftime("%d/%m/%Y") == "22/01/2026":
+        st.error("❌ ERRO CRÍTICO: O sistema ainda está a aplicar suspensão de Natal.")
+    else:
+        st.warning(f"O valor difere do esperado.")
+
+# --- 5. TABELA DE DEBUG (Para ver por que dias ele passou) ---
+with st.expander("Verificar Calendário (Debug)"):
+    st.write("A contar dias úteis a partir de:", data_inicial)
+    st.write("Feriados considerados:", feriados_list)
