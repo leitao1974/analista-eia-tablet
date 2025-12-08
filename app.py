@@ -5,65 +5,75 @@ import google.generativeai as genai
 import io
 
 # --- 1. Configuração da Página ---
-st.set_page_config(page_title="Analista EIA (Limpeza Auto)", page_icon="♻️")
+st.set_page_config(page_title="Analista EIA (Robust)", page_icon="🛡️")
 
-# --- 2. Memória da Aplicação (Para permitir o reset) ---
+# --- 2. Memória da Aplicação ---
 if 'uploader_key' not in st.session_state:
     st.session_state.uploader_key = 0
 
 def reset_app():
-    """Limpa a memória e força o recarregamento da página"""
     st.session_state.uploader_key += 1
 
 # --- 3. Interface Visual ---
-st.title("♻️ Analista de EIA (Modo Seguro)")
+st.title("🛡️ Analista de EIA (Modo Seguro)")
 st.markdown("""
-Esta ferramenta analisa Estudos de Impacte Ambiental (PDF) usando Inteligência Artificial.
-**Segurança:** Os dados são apagados da memória automaticamente após o download do relatório.
+Esta versão é resiliente a erros de leitura em PDFs complexos.
+**Segurança:** Os dados são limpos após o download.
 """)
 
-# Barra Lateral para a Chave
 with st.sidebar:
     st.header("Configuração")
-    api_key = st.text_input("Cole aqui a sua Google API Key", type="password")
-    st.info("Utilize apenas documentos públicos para teste.")
+    api_key = st.text_input("Cole aqui a Google API Key", type="password")
+    st.info("Nota: Se o PDF for digitalizado (imagem), a IA pode não conseguir ler o texto.")
 
-# Upload de Ficheiro (com chave dinâmica para reset)
 uploaded_file = st.file_uploader(
     "Carregue o ficheiro PDF", 
     type=['pdf'], 
     key=f"uploader_{st.session_state.uploader_key}"
 )
 
-# Área de Instruções (O Prompt)
 default_prompt = """
 Atua como um Especialista em Avaliação de Impacte Ambiental.
 Analisa o texto e cria um relatório técnico contendo:
-1. Resumo do Projeto (Localização e Tipologia).
-2. Principais Impactes (Fase de Construção e Exploração).
-3. Avaliação das Medidas de Mitigação.
+1. Resumo do Projeto.
+2. Principais Impactes Identificados.
+3. Medidas de Mitigação.
 4. Parecer Final Técnico.
 """
-instructions = st.text_area("Instruções para a Análise:", value=default_prompt, height=150)
+instructions = st.text_area("Instruções:", value=default_prompt, height=150)
 
-# --- 4. Funções Técnicas (O Motor) ---
+# --- 4. Funções Técnicas (Atualizadas para evitar Crash) ---
 def extract_text(file):
-    """Tira o texto de dentro do PDF"""
+    """Extrai texto com proteção contra erros de página"""
     text = ""
-    with pdfplumber.open(file) as pdf:
-        for page in pdf.pages:
-            extracted = page.extract_text()
-            if extracted:
-                text += extracted + "\n"
+    try:
+        with pdfplumber.open(file) as pdf:
+            total_pages = len(pdf.pages)
+            # Vamos ler página a página com cuidado
+            for i, page in enumerate(pdf.pages):
+                try:
+                    extracted = page.extract_text()
+                    if extracted:
+                        text += extracted + "\n"
+                except Exception as e:
+                    # Se uma página der erro, ignoramos e continuamos
+                    print(f"Aviso: Não foi possível ler a página {i+1}. Erro: {e}")
+                    continue
+    except Exception as e:
+        return f"Erro crítico ao abrir o ficheiro: {str(e)}"
+        
     return text
 
 def analyze_ai(text, prompt, key):
-    """Envia para o Google Gemini"""
     try:
+        if len(text) < 50:
+            return "ERRO: Não foi possível extrair texto suficiente. O PDF pode ser uma imagem digitalizada (scan) sem OCR."
+            
         genai.configure(api_key=key)
-        # Usamos o modelo Flash que lê muitos dados rápido
         model = genai.GenerativeModel('gemini-1.5-flash')
-        full_prompt = f"INSTRUÇÕES:\n{prompt}\n\nDOCUMENTO:\n{text}"
+        # Limitamos o tamanho do texto para não exceder limites extremos, se necessário
+        full_prompt = f"INSTRUÇÕES:\n{prompt}\n\nDADOS DO DOCUMENTO:\n{text}"
+        
         response = model.generate_content(full_prompt)
         return response.text
     except Exception as e:
@@ -72,38 +82,38 @@ def analyze_ai(text, prompt, key):
 # --- 5. Botão de Ação ---
 if st.button("🚀 Analisar Documento"):
     if not api_key:
-        st.error("⚠️ Falta a Chave da Google (API Key) na barra lateral.")
+        st.error("⚠️ Falta a Chave da Google.")
     elif not uploaded_file:
-        st.warning("⚠️ Falta carregar o PDF.")
+        st.warning("⚠️ Falta o PDF.")
     else:
-        with st.spinner("A ler o PDF e a pensar... (Aguarde)"):
-            # Passo A: Ler PDF
+        with st.spinner("A processar o documento..."):
+            # Passo A: Extrair
             pdf_text = extract_text(uploaded_file)
             
-            # Passo B: Perguntar à IA
-            if pdf_text:
+            # Passo B: Analisar
+            if pdf_text and "Erro crítico" not in pdf_text:
                 final_text = analyze_ai(pdf_text, instructions, api_key)
                 
-                # Passo C: Mostrar no Ecrã
-                st.success("Análise concluída com sucesso!")
-                st.subheader("Pré-visualização do Relatório:")
-                st.write(final_text)
-                
-                # Passo D: Criar Word na memória
-                doc = Document()
-                doc.add_heading('Relatório de Análise Automática (EIA)', 0)
-                doc.add_paragraph(final_text)
-                bio = io.BytesIO()
-                doc.save(bio)
-                
-                st.markdown("---")
-                st.warning("⚠️ Ao descarregar, a aplicação irá reiniciar por segurança.")
-                
-                # Passo E: Botão de Download com Limpeza
-                st.download_button(
-                    label="⬇️ Descarregar Word e Limpar Dados",
-                    data=bio.getvalue(),
-                    file_name="Relatorio_EIA.docx",
-                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                    on_click=reset_app # <--- O comando de limpeza
-                )
+                # Mostrar resultado
+                if "ERRO:" in final_text:
+                    st.error(final_text)
+                else:
+                    st.success("Concluído!")
+                    st.write(final_text)
+                    
+                    # Passo C: Gerar Word
+                    doc = Document()
+                    doc.add_heading('Relatório EIA', 0)
+                    doc.add_paragraph(final_text)
+                    bio = io.BytesIO()
+                    doc.save(bio)
+                    
+                    st.download_button(
+                        label="⬇️ Descarregar Word e Limpar",
+                        data=bio.getvalue(),
+                        file_name="Relatorio_EIA.docx",
+                        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                        on_click=reset_app
+                    )
+            else:
+                st.error(f"Falha na leitura do PDF: {pdf_text}")
