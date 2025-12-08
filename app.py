@@ -5,9 +5,8 @@ import google.generativeai as genai
 import io
 
 # --- Configuração ---
-st.set_page_config(page_title="Analista EIA (Robust)", page_icon="🛡️")
+st.set_page_config(page_title="Analista EIA (Diagnóstico)", page_icon="🔧")
 
-# --- Memória para Reset ---
 if 'uploader_key' not in st.session_state:
     st.session_state.uploader_key = 0
 
@@ -15,96 +14,105 @@ def reset_app():
     st.session_state.uploader_key += 1
 
 # --- Interface ---
-st.title("🛡️ Analista de EIA (Versão Robusta)")
-st.markdown("Versão atualizada com motor de leitura `pypdf` para maior compatibilidade.")
+st.title("🔧 Analista de EIA (Modo Diagnóstico)")
+st.warning("Este modo vai detetar automaticamente qual o modelo IA disponível na sua conta.")
 
 with st.sidebar:
     st.header("Configuração")
     api_key = st.text_input("Google API Key", type="password")
 
-# Upload
-uploaded_file = st.file_uploader(
-    "Carregue o PDF", 
-    type=['pdf'], 
-    key=f"uploader_{st.session_state.uploader_key}"
-)
+uploaded_file = st.file_uploader("Carregue o PDF", type=['pdf'], key=f"uploader_{st.session_state.uploader_key}")
 
-default_prompt = """
-Atua como um Especialista em Avaliação de Impacte Ambiental.
-Analisa o texto e cria um relatório técnico contendo:
-1. Resumo do Projeto.
-2. Principais Impactes Identificados.
-3. Medidas de Mitigação.
-4. Parecer Final Técnico.
-"""
-instructions = st.text_area("Instruções:", value=default_prompt, height=150)
+instructions = st.text_area("Instruções:", value="Faz um resumo deste documento.", height=100)
 
-# --- Funções ---
+# --- Funções Inteligentes ---
+def get_available_model(key):
+    """Pergunta à Google que modelos esta chave pode usar"""
+    try:
+        genai.configure(api_key=key)
+        # Lista todos os modelos disponíveis
+        models = list(genai.list_models())
+        
+        # Procura um modelo que gere texto (generateContent)
+        valid_models = []
+        for m in models:
+            if 'generateContent' in m.supported_generation_methods:
+                valid_models.append(m.name)
+        
+        # Tenta priorizar o Flash, depois o Pro, depois qualquer um
+        if not valid_models:
+            return None, "Nenhum modelo encontrado. A chave pode estar inválida."
+            
+        # Lógica de escolha automática
+        chosen = None
+        for m in valid_models:
+            if 'flash' in m:
+                chosen = m
+                break
+        if not chosen:
+            for m in valid_models:
+                if 'pro' in m:
+                    chosen = m
+                    break
+        if not chosen:
+            chosen = valid_models[0] # Escolhe o primeiro que aparecer
+            
+        return chosen, valid_models
+    except Exception as e:
+        return None, str(e)
+
 def extract_text_pypdf(file):
-    """Extrai texto usando pypdf (mais resistente a erros)"""
     text = ""
     try:
         reader = PdfReader(file)
-        # Ler todas as páginas
         for page in reader.pages:
-            extracted = page.extract_text()
-            if extracted:
-                text += extracted + "\n"
+            text += page.extract_text() + "\n"
     except Exception as e:
-        return f"ERRO DE LEITURA: {str(e)}"
+        return f"ERRO LEITURA: {str(e)}"
     return text
 
-def analyze_ai(text, prompt, key):
+def analyze_ai(text, prompt, key, model_name):
     try:
-        if "ERRO DE LEITURA" in text:
-            return text
-            
         genai.configure(api_key=key)
-        model = genai.GenerativeModel('gemini-1.5-flash')
-        
-        # Proteção contra textos vazios
-        if len(text.strip()) < 50:
-            return "O ficheiro parece vazio ou é uma imagem digitalizada. A IA precisa de texto selecionável."
-
-        full_prompt = f"INSTRUÇÕES:\n{prompt}\n\nDADOS DO DOCUMENTO:\n{text}"
-        response = model.generate_content(full_prompt)
+        model = genai.GenerativeModel(model_name) # Usa o modelo detetado
+        response = model.generate_content(f"{prompt}\n\nDADOS:\n{text[:100000]}") # Limite segurança
         return response.text
     except Exception as e:
         return f"Erro na IA: {str(e)}"
 
 # --- Botão ---
-if st.button("🚀 Analisar"):
+if st.button("🚀 Analisar (Auto-Detect)"):
     if not api_key:
-        st.error("⚠️ Falta a API Key.")
+        st.error("Falta a API Key.")
     elif not uploaded_file:
-        st.warning("⚠️ Falta o PDF.")
+        st.warning("Falta o PDF.")
     else:
-        with st.spinner("A ler com o novo motor..."):
-            # 1. Extrair
-            pdf_text = extract_text_pypdf(uploaded_file)
+        with st.spinner("A verificar a sua API Key e modelos disponíveis..."):
+            # 1. Detetar Modelo
+            chosen_model, log_models = get_available_model(api_key)
             
-            # 2. Analisar
-            result = analyze_ai(pdf_text, instructions, api_key)
-            
-            if "ERRO" in result or "Erro" in result:
-                st.error(result)
+            if not chosen_model:
+                st.error(f"Erro Crítico na Chave: {log_models}")
             else:
-                st.success("Sucesso!")
-                st.write(result)
-                
-                # 3. Word
-                doc = Document()
-                doc.add_heading('Relatório EIA', 0)
-                doc.add_paragraph(result)
-                bio = io.BytesIO()
-                doc.save(bio)
-                
-                st.download_button(
-                    label="⬇️ Download e Limpar",
-                    data=bio.getvalue(),
-                    file_name="Relatorio.docx",
-                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                    on_click=reset_app
-                )
+                st.info(f"✅ Modelo detetado e selecionado: **{chosen_model}**")
+                # (Opcional) Mostra lista para debug
+                with st.expander("Ver todos os modelos disponíveis na conta"):
+                    st.write(log_models)
 
-
+                # 2. Processar
+                with st.spinner("A ler e analisar..."):
+                    pdf_text = extract_text_pypdf(uploaded_file)
+                    result = analyze_ai(pdf_text, instructions, api_key, chosen_model)
+                    
+                    if "Erro" in result and len(result) < 200:
+                        st.error(result)
+                    else:
+                        st.success("Sucesso!")
+                        st.write(result)
+                        
+                        doc = Document()
+                        doc.add_paragraph(result)
+                        bio = io.BytesIO()
+                        doc.save(bio)
+                        
+                        st.download_button("⬇️ Download", bio.getvalue(), "Relatorio.docx", on_click=reset_app)
