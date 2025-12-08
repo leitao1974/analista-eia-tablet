@@ -7,188 +7,179 @@ from docx import Document
 from docx.shared import Pt, RGBColor
 
 # --- CONFIGURAÇÃO ---
-st.set_page_config(page_title="Simulador AIA (Afinado)", page_icon="⚖️", layout="wide")
+st.set_page_config(page_title="Simulador AIA (Simplex)", page_icon="⚡", layout="wide")
 
-st.title("⚖️ Simulador AIA - Modelo Afinado (Art. 19º)")
+st.title("⚡ Simulador AIA - RJAIA Simplex")
 st.markdown("""
-Este modelo utiliza a lógica legal estrita:
-1. **Conformidade:** Contagem a partir do início.
-2. **Data Final (DIA):** Contagem global (150 dias).
-3. **PTF:** Contagem regressiva (40 dias antes da data final).
+Configurado com os prazos do **Simplex Ambiental**:
+* **Conformidade (Instrução Liminar):** 10 dias úteis.
+* **Consulta Pública:** 35 dias úteis.
 """)
 
-# --- MOTOR DE CÁLCULO ---
+# --- FUNÇÕES DE TEMPO ---
+@st.cache_data
 def obter_feriados(anos):
-    # Feriados Nacionais de Portugal
-    pt_holidays = holidays.PT(years=anos)
-    # Nota: Se precisar de feriados locais (ex: 13 Junho Lisboa), adicione aqui:
-    # pt_holidays.append("2025-06-13") 
-    return pt_holidays
+    # Feriados Nacionais PT
+    return holidays.PT(years=anos)
 
-def eh_dia_util(data, feriados):
-    return data.weekday() < 5 and data not in feriados
+def eh_dia_util(data_check, lista_feriados):
+    # Retorna True se for dia útil (seg-sex e não feriado)
+    if data_check.weekday() >= 5: return False
+    if data_check in lista_feriados: return False
+    return True
 
-def somar_dias_uteis(inicio, dias, feriados):
-    data = inicio
-    contador = 0
-    while contador < dias:
-        data += timedelta(days=1)
-        if eh_dia_util(data, feriados):
-            contador += 1
-    return data
+def proximo_dia_util(data_ref, lista_feriados):
+    # Avança até encontrar um dia útil
+    d = data_ref
+    while not eh_dia_util(d, lista_feriados):
+        d += timedelta(days=1)
+    return d
 
-def subtrair_dias_uteis(fim, dias, feriados):
-    data = fim
-    contador = 0
-    while contador < dias:
-        data -= timedelta(days=1)
-        if eh_dia_util(data, feriados):
-            contador += 1
-    return data
+def somar_dias_uteis(inicio, dias, lista_feriados, incluir_inicio=False):
+    data_atual = inicio
+    dias_contados = 0
+    
+    # Se quisermos contar o próprio dia de início como Dia 1 (opcional)
+    if incluir_inicio and eh_dia_util(data_atual, lista_feriados):
+        dias_contados = 1
+    
+    while dias_contados < dias:
+        data_atual += timedelta(days=1)
+        if eh_dia_util(data_atual, lista_feriados):
+            dias_contados += 1
+    return data_atual
 
-# --- GERAR DADOS ---
-def calcular_cronograma_real(data_entrada, feriados):
+# --- MOTOR DE CÁLCULO ---
+def calcular_simplex(inicio, cfg, feriados):
     cronograma = []
     
-    # Se a entrada for sexta ou fds, a contagem legal começa no próximo dia útil
-    # Mas para "Nomeação" e "Reunião", muitas vezes conta-se o calendário corrido da gestão.
-    # Vamos assumir a regra do CPA: Prazo conta a partir do dia seguinte.
-    
-    # 1. DATA FINAL (O Marco Zero do Fim)
-    # Art. 19: 150 dias úteis
-    prazo_global = 150
-    data_final = somar_dias_uteis(data_entrada, prazo_global, feriados)
-    
-    # 2. CÁLCULOS INTERMÉDIOS
-    
-    # A. Nomeação (3 dias úteis após notificação/entrada)
-    data_nomeacao = somar_dias_uteis(data_entrada, 3, feriados)
+    # 0. ENTRADA
     cronograma.append({
-        "Ação": "Nomeação dos representantes",
-        "Data": data_nomeacao,
-        "Tempo/Regra": "3 dias úteis após receção",
-        "Obs": "Nº 5 do artigo 14.º"
+        "Data": inicio,
+        "Etapa": "0. Entrada",
+        "Descrição": "Submissão do Pedido",
+        "Duração": "0 dias"
     })
     
-    # B. Reunião da CA (Estimativa operacional baseada no seu exemplo)
-    # No seu exemplo: 06/06 -> 17/06 (aprox 6 dias úteis)
-    data_reuniao = somar_dias_uteis(data_entrada, 6, feriados) 
+    # 1. CONFORMIDADE (10 dias)
+    # A contagem começa no dia seguinte à entrada (regra geral CPA)
+    fim_conformidade = somar_dias_uteis(inicio, cfg['conf'], feriados)
+    
     cronograma.append({
-        "Ação": "Reunião da CA",
-        "Data": data_reuniao,
-        "Tempo/Regra": "Definido por agendamento (est. Dia 6)",
-        "Obs": "n.º 6 do Artigo 14.º (Exemplo: 10:30h)"
+        "Data": inicio, # Visualmente aparece na data de início da fase
+        "Etapa": "1. Conformidade",
+        "Descrição": "Verificação Liminar da Instrução",
+        "Duração": f"{cfg['conf']} dias (Uteis)",
+        "Fim Previsto": fim_conformidade
+    })
+    
+    # 2. CONSULTA PÚBLICA (35 dias)
+    # Inicia no dia útil seguinte ao fim da conformidade
+    inicio_cp = proximo_dia_util(fim_conformidade + timedelta(days=1), feriados)
+    fim_cp = somar_dias_uteis(inicio_cp, cfg['cp'], feriados)
+    
+    cronograma.append({
+        "Data": inicio_cp,
+        "Etapa": "2. Consulta Pública",
+        "Descrição": "Publicitação e Período de Consulta",
+        "Duração": f"{cfg['cp']} dias (Uteis)",
+        "Fim Previsto": fim_cp
+    })
+    
+    # 3. PÓS-CONSULTA E DECISÃO (Restante até aos 150 dias globais, se aplicável)
+    # No Simplex, o foco é cumprir os parciais, mas vamos projetar o final.
+    # Prazo global do Art 19 pode ser 150 (geral) ou menos.
+    # Vamos assumir o cálculo sequencial para os passos seguintes.
+    
+    # Análise Técnica (ex: 20 dias após CP)
+    inicio_analise = proximo_dia_util(fim_cp + timedelta(days=1), feriados)
+    fim_analise = somar_dias_uteis(inicio_analise, 20, feriados) # Estimativa Simplex
+    
+    cronograma.append({
+        "Data": inicio_analise,
+        "Etapa": "3. Análise Técnica",
+        "Descrição": "Apreciação técnica e PTF",
+        "Duração": "20 dias (Estimado)",
+        "Fim Previsto": fim_analise
     })
 
-    # C. Prazo Pedido Elementos
-    # No seu exemplo: 20/06 (aprox 9 dias úteis)
-    data_pedidos = somar_dias_uteis(data_entrada, 9, feriados)
-    cronograma.append({
-        "Ação": "Prazo para envio pedido elementos",
-        "Data": data_pedidos,
-        "Tempo/Regra": "Definido pela CA (est. Dia 9)",
-        "Obs": "Em função do prazo da conformidade"
-    })
-
-    # D. Decisão Conformidade (30 dias úteis)
-    data_conformidade = somar_dias_uteis(data_entrada, 30, feriados)
-    cronograma.append({
-        "Ação": "Decisão da CA sobre conformidade",
-        "Data": data_conformidade,
-        "Tempo/Regra": "30 dias úteis",
-        "Obs": "n.º 7 do Artigo 14.º"
-    })
+    # Decisão Final (DIA) - Estimativa para fechar perto dos 100-120 dias no total Simplex
+    inicio_decisao = proximo_dia_util(fim_analise + timedelta(days=1), feriados)
+    fim_decisao = somar_dias_uteis(inicio_decisao, 15, feriados)
     
-    # E. Proposta PTF (CÁLCULO REGRESSIVO)
-    # 40 dias antes da data final
-    data_ptf = subtrair_dias_uteis(data_final, 40, feriados)
     cronograma.append({
-        "Ação": "Proposta do parecer técnico final (PTF)",
-        "Data": data_ptf,
-        "Tempo/Regra": "40 dias ANTES do prazo final",
-        "Obs": "Art. 19º n.º 2 (Cálculo Inverso)"
-    })
-    
-    # F. Emissão DIA (Data Final)
-    cronograma.append({
-        "Ação": "Emissão de DIA (Data Limite)",
-        "Data": data_final,
-        "Tempo/Regra": "150 dias úteis",
-        "Obs": "Alínea a) do n.º 2 do artigo 19º",
+        "Data": fim_decisao,
+        "Etapa": "4. Decisão Final (DIA)",
+        "Descrição": "Emissão da DIA",
+        "Duração": "-",
+        "Fim Previsto": fim_decisao,
         "Destaque": True
     })
-    
-    return cronograma, data_final
+
+    return cronograma
 
 # --- INTERFACE ---
 with st.sidebar:
-    st.header("Parâmetros")
-    data_input = st.date_input("Data de Entrada", date(2025, 6, 6))
-    st.info("Para testar o seu exemplo, mantenha 6 de Junho de 2025.")
+    st.header("Parâmetros Simplex")
+    # DATA CORRIGIDA PARA O SEU EXEMPLO (03/06/2025)
+    data_entrada = st.date_input("Data de Entrada", date(2025, 6, 3))
+    
+    st.subheader("Durações (Dias Úteis)")
+    dias_conf = st.number_input("1. Conformidade", value=10, step=1)
+    dias_cp = st.number_input("2. Consulta Pública", value=35, step=1)
+    
+    st.markdown("---")
+    st.caption("O Simplex (DL 11/2023) reduz conformidade para 10 dias e ajusta a CP.")
 
 # Execução
-anos = [data_input.year, data_input.year + 1]
+anos = [data_entrada.year, data_entrada.year + 1]
 feriados = obter_feriados(anos)
 
-# Cálculo
-cronograma, data_fim = calcular_cronograma_real(data_input, feriados)
+# Ajuste se entrada for feriado/fds
+if not eh_dia_util(data_entrada, feriados):
+    st.warning("A data de entrada selecionada não é um dia útil.")
 
-# --- VISUALIZAÇÃO ---
-st.subheader(f"Cronograma Calculado (Entrada: {data_input.strftime('%d/%m/%Y')})")
-
-df = pd.DataFrame(cronograma)
-
-# Formatação para exibição
-def style_table(row):
-    if row.get("Destaque"):
-        return ['background-color: #ffcccc; font-weight: bold'] * len(row)
-    if "PTF" in row["Ação"]:
-        return ['background-color: #e6f7ff; font-weight: bold'] * len(row)
-    return [''] * len(row)
-
-# Ajuste datas para string
-df_show = df.copy()
-df_show['Data'] = df_show['Data'].apply(lambda x: x.strftime('%d/%m/%Y'))
-df_show = df_show.drop(columns=['Destaque'], errors='ignore')
-
-st.table(df.style.apply(style_table, axis=1).format({"Data": lambda t: t.strftime("%d/%m/%Y")}))
-
-# --- CHECK DE VALIDAÇÃO ---
-st.divider()
-c1, c2 = st.columns(2)
-with c1:
-    st.markdown("### 🔍 Verificação do seu Exemplo")
-    ptf_row = next(item for item in cronograma if "PTF" in item["Ação"])
-    dia_row = next(item for item in cronograma if "Emissão de DIA" in item["Ação"])
+if st.button("Calcular Cronograma Simplex", type="primary"):
     
-    st.write(f"**PTF (Calculado):** {ptf_row['Data'].strftime('%d/%m/%Y')}")
-    st.write(f"**DIA (Calculada):** {dia_row['Data'].strftime('%d/%m/%Y')}")
+    cfg = {'conf': dias_conf, 'cp': dias_cp}
+    dados = calcular_simplex(data_entrada, cfg, feriados)
     
-    st.caption("*Nota: Pequenas divergências de 1-2 dias podem ocorrer devido a feriados locais (ex: Santo António a 13/Jun) que o sistema nacional não conta por defeito.*")
-
-with c2:
-    # Exportar Word
-    def criar_word(dados):
-        doc = Document()
-        doc.add_heading('Cronograma RJAIA', 0)
+    # Exibir como o seu exemplo de texto
+    st.subheader("2. Detalhe das Etapas (Simulação)")
+    
+    for etapa in dados:
+        cor = "blue" if "Conformidade" in etapa['Etapa'] else "green" if "Consulta" in etapa['Etapa'] else "black"
+        bg = "#f0f2f6"
         
-        table = doc.add_table(rows=1, cols=3)
-        table.style = 'Table Grid'
-        hdr = table.rows[0].cells
-        hdr[0].text = 'Ação'
-        hdr[1].text = 'Data'
-        hdr[2].text = 'Observações'
+        if etapa.get("Destaque"):
+            bg = "#ffebee"
+            cor = "red"
+            
+        data_show = etapa['Data'].strftime('%d/%m/%Y')
         
-        for item in dados:
-            row = table.add_row().cells
-            row[0].text = item['Ação']
-            row[1].text = item['Data'].strftime('%d/%m/%Y')
-            row[2].text = item['Obs']
-        return doc
+        with st.container():
+            st.markdown(f"""
+            <div style="background-color: {bg}; padding: 10px; border-radius: 5px; margin-bottom: 10px; border-left: 5px solid {cor}">
+                <strong>{data_show} - {etapa['Etapa']}</strong><br>
+                <span style="color: #555;">Descrição: {etapa['Descrição']}</span><br>
+                <span style="color: #555;">Duração considerada: <strong>{etapa['Duração']}</strong></span>
+            </div>
+            """, unsafe_allow_html=True)
+            
+            # Se quiser mostrar a data de fim da etapa também
+            if "Fim Previsto" in etapa and etapa['Etapa'] != "0. Entrada" and not etapa.get("Destaque"):
+                st.caption(f"Termina a: {etapa['Fim Previsto'].strftime('%d/%m/%Y')}")
 
-    btn_word = io.BytesIO()
-    doc = criar_word(cronograma)
-    doc.save(btn_word)
-    btn_word.seek(0)
+    # Tabela Simples para Download
+    df = pd.DataFrame(dados)
+    df['Data'] = df['Data'].apply(lambda x: x.strftime('%d/%m/%Y'))
+    if 'Fim Previsto' in df.columns:
+        df['Fim Previsto'] = df['Fim Previsto'].apply(lambda x: x.strftime('%d/%m/%Y') if not pd.isnull(x) else "")
     
-    st.download_button("📄 Baixar Tabela em Word", btn_word, "Cronograma_Afinado.docx")
+    st.divider()
+    # Excel Download
+    buffer = io.BytesIO()
+    with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
+        df.to_excel(writer, index=False)
+        
+    st.download_button("📥 Baixar Tabela Excel", buffer, "Cronograma_Simplex.xlsx")
