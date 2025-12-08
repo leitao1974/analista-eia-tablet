@@ -1,12 +1,15 @@
 import streamlit as st
 from pypdf import PdfReader
 from docx import Document
+from docx.shared import Pt
 import google.generativeai as genai
 import io
+from datetime import datetime
 
-# --- Configuração ---
-st.set_page_config(page_title="Analista EIA (Diagnóstico)", page_icon="🔧")
+# --- Configuração da Página ---
+st.set_page_config(page_title="Analista EIA Pro (Benchmarking)", page_icon="🌍", layout="wide")
 
+# --- Gestão de Estado ---
 if 'uploader_key' not in st.session_state:
     st.session_state.uploader_key = 0
 
@@ -14,59 +17,83 @@ def reset_app():
     st.session_state.uploader_key += 1
 
 # --- Interface ---
-st.title("🔧 Analista de EIA (Modo Diagnóstico)")
-st.warning("Este modo vai detetar automaticamente qual o modelo IA disponível na sua conta.")
+st.title("🌍 Analista EIA Pro (Com Benchmarking e Citações)")
+st.markdown("""
+Gera relatórios técnicos com **comparação de projetos semelhantes**, **novas medidas** e **referência às páginas**.
+""")
 
 with st.sidebar:
-    st.header("Configuração")
+    st.header("🔐 Configuração")
     api_key = st.text_input("Google API Key", type="password")
+    st.info("A IA irá comparar este estudo com as 'Melhores Técnicas Disponíveis' (BAT) do setor.")
 
-uploaded_file = st.file_uploader("Carregue o PDF", type=['pdf'], key=f"uploader_{st.session_state.uploader_key}")
+uploaded_file = st.file_uploader(
+    "Carregue o PDF do Estudo", 
+    type=['pdf'], 
+    key=f"uploader_{st.session_state.uploader_key}"
+)
 
-instructions = st.text_area("Instruções:", value="Faz um resumo deste documento.", height=100)
+# --- O NOVO PROMPT DE BENCHMARKING (AQUI ESTÁ A MELHORIA) ---
+default_prompt = """
+Atua como um Perito Sénior em Avaliação de Impacte Ambiental com acesso a conhecimento de projetos internacionais.
+O teu objetivo é realizar uma auditoria técnica ao documento, usando uma abordagem de BENCHMARKING.
 
-# --- Funções Inteligentes ---
+O texto de entrada contém marcadores `--- PÁGINA X ---`. Usa-os OBRIGATORIAMENTE para fundamentar a análise.
+
+Estrutura o relatório EXATAMENTE nestes 7 Capítulos:
+
+1. RESUMO DETALHADO DO PROJETO
+   - Descreve a localização, enquadramento e componentes principais (Pág. X).
+
+2. PRINCIPAIS IMPACTES IDENTIFICADOS (Por Descritor)
+   - Analisa os descritores (Ecologia, Hídricos, Ruído, etc.) e identifica os impactes significativos citados no estudo.
+
+3. MEDIDAS DE MITIGAÇÃO E COMPENSAÇÃO PROPOSTAS NO ESTUDO
+   - Lista o que o promotor propõe fazer.
+
+4. ANÁLISE CRÍTICA E BENCHMARKING (O Ponto Mais Importante)
+   - Compara as medidas deste estudo com **Projetos Semelhantes e Boas Práticas Internacionais**.
+   - Identifica LACUNAS: O que é que costuma ser feito neste tipo de projetos (ex: fotovoltaico, eólico, pedreira, estrada) que NÃO está previsto aqui?
+   - Propõe **NOVAS MEDIDAS CONCRETAS** baseadas nessa comparação.
+   - Exemplo: "Em projetos semelhantes na Europa, aplica-se a medida X, que está ausente neste estudo."
+
+5. FUNDAMENTAÇÃO (Referências de Página)
+   - Valida a tua análise indicando onde no texto original encontraste a informação. Ex: "(Pág. 45)".
+
+6. CITAÇÕES RELEVANTES
+   - Transcreve 3 frases literais (entre aspas) do documento que evidenciem fragilidades ou assumam impactes severos.
+
+7. CONCLUSÕES E PARECER TÉCNICO
+   - Emite parecer (Favorável/Condicionado/Desfavorável).
+   - Resume as novas medidas que TÊM de ser incluídas para viabilizar o projeto.
+
+Tom: Técnico, Exigente e Comparativo.
+"""
+instructions = st.text_area("Instruções (Prompt):", value=default_prompt, height=450)
+
+# --- Funções Técnicas ---
 def get_available_model(key):
-    """Pergunta à Google que modelos esta chave pode usar"""
     try:
         genai.configure(api_key=key)
-        # Lista todos os modelos disponíveis
         models = list(genai.list_models())
-        
-        # Procura um modelo que gere texto (generateContent)
-        valid_models = []
-        for m in models:
-            if 'generateContent' in m.supported_generation_methods:
-                valid_models.append(m.name)
-        
-        # Tenta priorizar o Flash, depois o Pro, depois qualquer um
-        if not valid_models:
-            return None, "Nenhum modelo encontrado. A chave pode estar inválida."
-            
-        # Lógica de escolha automática
-        chosen = None
+        valid_models = [m.name for m in models if 'generateContent' in m.supported_generation_methods]
+        if not valid_models: return None
+        # Prioridade Flash > Pro
         for m in valid_models:
-            if 'flash' in m:
-                chosen = m
-                break
-        if not chosen:
-            for m in valid_models:
-                if 'pro' in m:
-                    chosen = m
-                    break
-        if not chosen:
-            chosen = valid_models[0] # Escolhe o primeiro que aparecer
-            
-        return chosen, valid_models
-    except Exception as e:
-        return None, str(e)
+            if 'flash' in m: return m
+        return valid_models[0]
+    except:
+        return None
 
-def extract_text_pypdf(file):
+def extract_text_with_page_numbers(file):
     text = ""
     try:
         reader = PdfReader(file)
-        for page in reader.pages:
-            text += page.extract_text() + "\n"
+        for i, page in enumerate(reader.pages):
+            content = page.extract_text()
+            if content:
+                page_marker = f"\n\n--- PÁGINA {i+1} ---\n"
+                text += page_marker + content
     except Exception as e:
         return f"ERRO LEITURA: {str(e)}"
     return text
@@ -74,45 +101,71 @@ def extract_text_pypdf(file):
 def analyze_ai(text, prompt, key, model_name):
     try:
         genai.configure(api_key=key)
-        model = genai.GenerativeModel(model_name) # Usa o modelo detetado
-        response = model.generate_content(f"{prompt}\n\nDADOS:\n{text[:100000]}") # Limite segurança
+        model = genai.GenerativeModel(model_name)
+        
+        # Aumentamos o contexto para permitir análises profundas
+        safe_text = text[:500000] 
+        
+        full_prompt = f"{prompt}\n\n=== INÍCIO DO DOCUMENTO ===\n{safe_text}\n=== FIM DO DOCUMENTO ==="
+        
+        response = model.generate_content(full_prompt)
         return response.text
     except Exception as e:
         return f"Erro na IA: {str(e)}"
 
-# --- Botão ---
-if st.button("🚀 Analisar (Auto-Detect)"):
-    if not api_key:
-        st.error("Falta a API Key.")
-    elif not uploaded_file:
-        st.warning("Falta o PDF.")
-    else:
-        with st.spinner("A verificar a sua API Key e modelos disponíveis..."):
-            # 1. Detetar Modelo
-            chosen_model, log_models = get_available_model(api_key)
-            
-            if not chosen_model:
-                st.error(f"Erro Crítico na Chave: {log_models}")
-            else:
-                st.info(f"✅ Modelo detetado e selecionado: **{chosen_model}**")
-                # (Opcional) Mostra lista para debug
-                with st.expander("Ver todos os modelos disponíveis na conta"):
-                    st.write(log_models)
+def create_word_doc(content):
+    doc = Document()
+    style = doc.styles['Normal']
+    font = style.font
+    font.name = 'Calibri'
+    font.size = Pt(11)
+    
+    doc.add_heading('Parecer Técnico de Avaliação de Impacte Ambiental', 0)
+    p = doc.add_paragraph()
+    p.add_run(f'Data da Análise: {datetime.now().strftime("%d/%m/%Y")}').bold = True
+    doc.add_paragraph('---')
+    
+    doc.add_paragraph(content)
+    
+    section = doc.sections[0]
+    footer = section.footer
+    p = footer.paragraphs[0]
+    p.text = "Relatório gerado por IA com base na documentação submetida e Benchmarking internacional."
+    
+    bio = io.BytesIO()
+    doc.save(bio)
+    return bio
 
-                # 2. Processar
-                with st.spinner("A ler e analisar..."):
-                    pdf_text = extract_text_pypdf(uploaded_file)
-                    result = analyze_ai(pdf_text, instructions, api_key, chosen_model)
-                    
-                    if "Erro" in result and len(result) < 200:
-                        st.error(result)
-                    else:
-                        st.success("Sucesso!")
-                        st.write(result)
-                        
-                        doc = Document()
-                        doc.add_paragraph(result)
-                        bio = io.BytesIO()
-                        doc.save(bio)
-                        
-                        st.download_button("⬇️ Download", bio.getvalue(), "Relatorio.docx", on_click=reset_app)
+# --- Botão de Ação ---
+if st.button("🚀 Gerar Análise Crítica"):
+    if not api_key:
+        st.error("⚠️ Falta a API Key.")
+    elif not uploaded_file:
+        st.warning("⚠️ Falta o PDF.")
+    else:
+        with st.spinner("📄 A ler PDF e a mapear páginas..."):
+            model_name = get_available_model(api_key)
+            if not model_name:
+                st.error("Erro na API Key.")
+                st.stop()
+            pdf_text = extract_text_with_page_numbers(uploaded_file)
+            
+        with st.spinner("🌍 A realizar Benchmarking com projetos de referência..."):
+            result = analyze_ai(pdf_text, instructions, api_key, model_name)
+            
+            if "Erro" in result and len(result) < 200:
+                st.error(result)
+            else:
+                st.success("Análise de Benchmarking Concluída!")
+                with st.expander("Ver Relatório no Ecrã"):
+                    st.markdown(result)
+                
+                word_file = create_word_doc(result)
+                
+                st.download_button(
+                    label="⬇️ Descarregar Relatório Técnico (.docx)",
+                    data=word_file.getvalue(),
+                    file_name="Parecer_Tecnico_Benchmarking.docx",
+                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                    on_click=reset_app
+                )
