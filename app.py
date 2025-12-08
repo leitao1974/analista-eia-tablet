@@ -10,7 +10,7 @@ import re
 import time
 
 # --- Configuração ---
-st.set_page_config(page_title="Analista EIA (Legislativo Dinâmico)", page_icon="⚖️", layout="wide")
+st.set_page_config(page_title="Analista EIA (RJAIA Completo)", page_icon="⚖️", layout="wide")
 
 if 'uploader_key' not in st.session_state:
     st.session_state.uploader_key = 0
@@ -19,10 +19,10 @@ def reset_app():
     st.session_state.uploader_key += 1
 
 # ==========================================
-# --- 1. BASE DE DADOS LEGISLATIVA (O CÉREBRO JURÍDICO) ---
+# --- 1. BASE DE DADOS LEGISLATIVA (RJAIA COMPLETO) ---
 # ==========================================
 
-# Leis que se aplicam a TODOS os projetos
+# Leis Transversais (Aplicam-se a tudo)
 COMMON_LAWS = {
     "RJAIA (DL 151-B/2013)": "https://diariodarepublica.pt/dr/legislacao-consolidada/decreto-lei/2013-116043164",
     "REDE NATURA (DL 140/99)": "https://diariodarepublica.pt/dr/legislacao-consolidada/decreto-lei/1999-34460975",
@@ -30,31 +30,49 @@ COMMON_LAWS = {
     "ÁGUA (Lei 58/2005)": "https://diariodarepublica.pt/dr/legislacao-consolidada/lei/2005-34563267"
 }
 
-# Leis específicas por TIPOLOGIA
+# Leis Específicas por Setor (Baseado nos Anexos do RJAIA)
 SPECIFIC_LAWS = {
-    "Pedreiras e Minas": {
+    "1. Agricultura, Silvicultura e Aquicultura": {
+        "ATIVIDADE PECUÁRIA (NREAP)": "https://diariodarepublica.pt/dr/legislacao-consolidada/decreto-lei/2008-34480678",
+        "GESTÃO EFLUENTES (Port. 631/2009)": "https://diariodarepublica.pt/dr/detalhe/portaria/631-2009-518868",
+        "FLORESTAS (DL 16/2009 - PGF)": "https://diariodarepublica.pt/dr/legislacao-consolidada/decreto-lei/2009-34488356"
+    },
+    "2. Indústria Extrativa (Minas e Pedreiras)": {
         "MASSAS MINERAIS (DL 270/2001)": "https://diariodarepublica.pt/dr/legislacao-consolidada/decreto-lei/2001-34449875",
         "RESÍDUOS DE EXTRAÇÃO (DL 10/2010)": "https://diariodarepublica.pt/dr/legislacao-consolidada/decreto-lei/2010-34658745",
         "SEGURANÇA MINAS (DL 162/90)": "https://diariodarepublica.pt/dr/detalhe/decreto-lei/162-1990-417937"
     },
-    "Energia Renovável (Eólica/Solar)": {
+    "3. Indústria Energética": {
         "SISTEMA ELÉTRICO (DL 15/2022)": "https://diariodarepublica.pt/dr/legislacao-consolidada/decreto-lei/2022-177343687",
-        "SERVIDÕES AERONÁUTICAS (DL 48/2022)": "https://diariodarepublica.pt/dr/detalhe/decreto-lei/48-2022-185799345",
-        "REN (DL 166/2008 - RJREN)": "https://diariodarepublica.pt/dr/legislacao-consolidada/decreto-lei/2008-34484789"
-    },
-    "Indústria Geral": {
         "EMISSÕES INDUSTRIAIS (DL 127/2013)": "https://diariodarepublica.pt/dr/legislacao-consolidada/decreto-lei/2013-34789569",
-        "LICENCIAMENTO INDUSTRIAL (SIR)": "https://diariodarepublica.pt/dr/legislacao-consolidada/decreto-lei/2015-106567543",
-        "RESÍDUOS (RGGR - DL 102-D/2020)": "https://diariodarepublica.pt/dr/legislacao-consolidada/decreto-lei/2020-150917243"
+        "REFINAÇÃO/COMBUSTÍVEIS": "https://diariodarepublica.pt/dr/legislacao-consolidada/decreto-lei/2012-34589012"
     },
-    "Urbanismo e Loteamentos": {
+    "4. Produção e Transformação de Metais": {
+        "EMISSÕES INDUSTRIAIS (DL 127/2013)": "https://diariodarepublica.pt/dr/legislacao-consolidada/decreto-lei/2013-34789569",
+        "LICENCIAMENTO INDUSTRIAL (SIR)": "https://diariodarepublica.pt/dr/legislacao-consolidada/decreto-lei/2015-106567543"
+    },
+    "5. Indústria Mineral e Química": {
+        "PREVENÇÃO ACIDENTES GRAVES (SEVESO - DL 150/2015)": "https://diariodarepublica.pt/dr/legislacao-consolidada/decreto-lei/2015-106558967",
+        "EMISSÕES (DL 127/2013)": "https://diariodarepublica.pt/dr/legislacao-consolidada/decreto-lei/2013-34789569"
+    },
+    "6. Infraestruturas (Rodovias, Ferrovias, Aeroportos)": {
+        "ESTATUTO ESTRADAS (Lei 34/2015)": "https://diariodarepublica.pt/dr/legislacao-consolidada/lei/2015-34585678",
+        "SERVIDÕES AERONÁUTICAS (DL 48/2022)": "https://diariodarepublica.pt/dr/detalhe/decreto-lei/48-2022-185799345",
+        "RUÍDO GRANDES INFRAESTRUTURAS": "https://diariodarepublica.pt/dr/legislacao-consolidada/decreto-lei/2007-34526556"
+    },
+    "7. Projetos de Engenharia Hidráulica (Barragens, Portos)": {
+        "SEGURANÇA BARRAGENS (DL 21/2018)": "https://diariodarepublica.pt/dr/legislacao-consolidada/decreto-lei/2018-114833256",
+        "DOMÍNIO HÍDRICO (Lei 54/2005)": "https://diariodarepublica.pt/dr/legislacao-consolidada/lei/2005-34563267"
+    },
+    "8. Tratamento de Resíduos e Águas Residuais": {
+        "RESÍDUOS (RGGR - DL 102-D/2020)": "https://diariodarepublica.pt/dr/legislacao-consolidada/decreto-lei/2020-150917243",
+        "ÁGUAS RESIDUAIS URBANAS (DL 152/97)": "https://diariodarepublica.pt/dr/legislacao-consolidada/decreto-lei/1997-34512345",
+        "ATERROS (DL 102-D/2020)": "https://diariodarepublica.pt/dr/legislacao-consolidada/decreto-lei/2020-150917243"
+    },
+    "9. Projetos Urbanos, Turísticos e Outros": {
         "RJUE (Urbanização - DL 555/99)": "https://diariodarepublica.pt/dr/legislacao-consolidada/decreto-lei/1999-34563452",
-        "ACESSIBILIDADES (DL 163/2006)": "https://diariodarepublica.pt/dr/legislacao-consolidada/decreto-lei/2006-34524456",
-        "RESÍDUOS CONSTRUÇÃO (DL 46/2008)": "https://diariodarepublica.pt/dr/legislacao-consolidada/decreto-lei/2008-34460567"
-    },
-    "Agropecuária": {
-        "ATIVIDADE PECUÁRIA (NREAP)": "https://diariodarepublica.pt/dr/legislacao-consolidada/decreto-lei/2008-34480678",
-        "GESTÃO DE EFLUENTES (Portaria 631/2009)": "https://diariodarepublica.pt/dr/detalhe/portaria/631-2009-518868"
+        "EMPREENDIMENTOS TURÍSTICOS (RJET)": "https://diariodarepublica.pt/dr/legislacao-consolidada/decreto-lei/2008-34460567",
+        "ACESSIBILIDADES (DL 163/2006)": "https://diariodarepublica.pt/dr/legislacao-consolidada/decreto-lei/2006-34524456"
     }
 }
 
@@ -62,14 +80,13 @@ SPECIFIC_LAWS = {
 # --- 2. INTERFACE E LÓGICA ---
 # ==========================================
 
-st.title("⚖️ Analista EIA Pro (Contexto Legislativo Adaptável)")
-st.markdown("O sistema adapta a legislação de referência consoante a tipologia do projeto selecionado.")
+st.title("⚖️ Analista EIA Pro (Todas as Tipologias RJAIA)")
+st.markdown("Auditoria Técnica e Legal adaptada aos setores definidos nos Anexos I e II do DL 151-B/2013.")
 
 with st.sidebar:
     st.header("🔐 1. Configuração")
     api_key = st.text_input("Google API Key", type="password")
     
-    # SELEÇÃO DO MODELO
     selected_model = None
     if api_key:
         try:
@@ -86,30 +103,31 @@ with st.sidebar:
 
     st.divider()
     
-    # SELEÇÃO DA TIPOLOGIA (AQUI ACONTECE A MAGIA)
-    st.header("🏗️ 2. Tipologia do Projeto")
+    # SELEÇÃO DA TIPOLOGIA (Lista Completa)
+    st.header("🏗️ 2. Tipologia (Anexos RJAIA)")
     project_type = st.selectbox(
-        "Selecione o tipo de projeto:",
-        ["Pedreiras e Minas", "Energia Renovável (Eólica/Solar)", "Indústria Geral", "Urbanismo e Loteamentos", "Agropecuária", "Outro (Apenas Geral)"]
+        "Selecione o setor de atividade:",
+        list(SPECIFIC_LAWS.keys()) + ["Outra Tipologia"]
     )
     
     # Construção dinâmica da lista de leis
-    active_laws = COMMON_LAWS.copy() # Começa com as gerais
+    active_laws = COMMON_LAWS.copy() 
     if project_type in SPECIFIC_LAWS:
-        active_laws.update(SPECIFIC_LAWS[project_type]) # Adiciona as específicas
-        st.caption(f"✅ Legislação específica de '{project_type}' carregada.")
+        active_laws.update(SPECIFIC_LAWS[project_type])
+        st.caption(f"✅ Legislação específica carregada.")
+        with st.expander("Ver leis aplicáveis"):
+            st.write(active_laws)
 
 uploaded_file = st.file_uploader("Carregue o PDF", type=['pdf'], key=f"uploader_{st.session_state.uploader_key}")
 
-# Converter o dicionário de leis ativas para texto para o Prompt
 legal_context_str = "\n".join([f"- {k}: {v}" for k, v in active_laws.items()])
 
 # --- PROMPT ---
 default_prompt = f"""
 Atua como Perito Sénior em Engenharia do Ambiente e Jurista.
-Realiza uma auditoria técnica e legal ao EIA de um projeto de tipologia: {project_type.upper()}.
+Realiza uma auditoria técnica e legal ao EIA de um projeto do setor: {project_type.upper()}.
 
-CONTEXTO LEGISLATIVO APLICÁVEL (Versões Consolidadas):
+CONTEXTO LEGISLATIVO (Prioritário):
 {legal_context_str}
 
 REGRAS DE FORMATAÇÃO:
@@ -118,24 +136,26 @@ REGRAS DE FORMATAÇÃO:
 
 Estrutura o relatório EXATAMENTE nestes 7 Capítulos:
 
-## 1. ENQUADRAMENTO LEGAL E CONFORMIDADE ({project_type})
-   - O projeto enquadra-se no RJAIA?
-   - Cita a legislação específica listada acima?
+## 1. ENQUADRAMENTO LEGAL E CONFORMIDADE
+   - O projeto enquadra-se corretamente no RJAIA (Anexo I ou II)?
+   - Verifica o cumprimento da legislação específica listada acima.
 
 ## 2. PRINCIPAIS IMPACTES (Técnico)
-   - Análise por descritor.
+   - Análise por descritor ambiental.
 
 ## 3. MEDIDAS DE MITIGAÇÃO PROPOSTAS
+   - Lista as medidas.
 
 ## 4. ANÁLISE CRÍTICA E BENCHMARKING
-   - Verifica conformidade com a legislação listada.
-   - Compara com boas práticas do setor {project_type}.
+   - As medidas são suficientes face à lei e melhores práticas do setor {project_type}?
+   - Identifica lacunas legais.
 
 ## 5. FUNDAMENTAÇÃO (Pág. X)
 
 ## 6. CITAÇÕES RELEVANTES
 
 ## 7. CONCLUSÕES
+   - Parecer Final fundamentado.
 
 Tom: Formal, Técnico e Jurídico.
 """
@@ -230,8 +250,9 @@ def create_professional_word_doc(content, legal_links, project_type):
     style_h1.font.bold = True
     style_h1.font.color.rgb = RGBColor(0, 51, 102)
 
-    title = doc.add_heading(f'PARECER TÉCNICO EIA - {project_type.upper()}', 0)
+    title = doc.add_heading(f'PARECER TÉCNICO EIA', 0)
     title.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    doc.add_paragraph(f'Setor: {project_type}').alignment = WD_ALIGN_PARAGRAPH.CENTER
     doc.add_paragraph(f'Data: {datetime.now().strftime("%d/%m/%Y")}').alignment = WD_ALIGN_PARAGRAPH.CENTER
     doc.add_paragraph('---')
 
@@ -239,7 +260,6 @@ def create_professional_word_doc(content, legal_links, project_type):
     
     doc.add_page_break()
     doc.add_heading('ANEXO: Legislação Aplicável (Links DRE)', level=1)
-    doc.add_paragraph(f'Legislação específica considerada para a tipologia: {project_type}')
     
     for name, url in legal_links.items():
         p = doc.add_paragraph(style='List Bullet')
@@ -273,6 +293,5 @@ if st.button("🚀 Gerar Relatório", type="primary", use_container_width=True):
                 st.success("✅ Sucesso!")
                 with st.expander("Ver Texto"):
                     st.write(result)
-                # Passamos também o project_type para o título do Word
                 word_file = create_professional_word_doc(result, active_laws, project_type)
-                st.download_button("⬇️ Download Word", word_file.getvalue(), f"Parecer_{project_type[:10]}.docx", on_click=reset_app, type="primary")
+                st.download_button("⬇️ Download Word", word_file.getvalue(), f"Parecer_EIA.docx", on_click=reset_app, type="primary")
