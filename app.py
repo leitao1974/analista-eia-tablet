@@ -1,15 +1,16 @@
 import streamlit as st
 from pypdf import PdfReader
 from docx import Document
-from docx.shared import Pt
+from docx.shared import Pt, RGBColor, Mm
+from docx.enum.text import WD_ALIGN_PARAGRAPH
 import google.generativeai as genai
 import io
 from datetime import datetime
+import re
 
-# --- Configuração da Página ---
-st.set_page_config(page_title="Analista EIA Pro (Benchmarking)", page_icon="🌍", layout="wide")
+# --- Configuração ---
+st.set_page_config(page_title="Analista EIA (Layout Pro)", page_icon="📝", layout="wide")
 
-# --- Gestão de Estado ---
 if 'uploader_key' not in st.session_state:
     st.session_state.uploader_key = 0
 
@@ -17,155 +18,121 @@ def reset_app():
     st.session_state.uploader_key += 1
 
 # --- Interface ---
-st.title("🌍 Analista EIA Pro (Com Benchmarking e Citações)")
+st.title("📝 Analista EIA Pro (Layout Word Profissional)")
 st.markdown("""
-Gera relatórios técnicos com **comparação de projetos semelhantes**, **novas medidas** e **referência às páginas**.
+Gera pareceres técnicos com **formatação profissional no Word**: Títulos reais, espaçamento correto, listas e negritos automáticos.
+Inclui Benchmarking, Análise Jurídica e Links Oficiais.
 """)
 
 with st.sidebar:
     st.header("🔐 Configuração")
     api_key = st.text_input("Google API Key", type="password")
-    st.info("A IA irá comparar este estudo com as 'Melhores Técnicas Disponíveis' (BAT) do setor.")
+    st.info("O documento final terá um layout limpo e estruturado, pronto a ser entregue.")
 
-uploaded_file = st.file_uploader(
-    "Carregue o PDF do Estudo", 
-    type=['pdf'], 
-    key=f"uploader_{st.session_state.uploader_key}"
-)
+uploaded_file = st.file_uploader("Carregue o PDF", type=['pdf'], key=f"uploader_{st.session_state.uploader_key}")
 
-# --- O NOVO PROMPT DE BENCHMARKING (AQUI ESTÁ A MELHORIA) ---
-default_prompt = """
-Atua como um Perito Sénior em Avaliação de Impacte Ambiental com acesso a conhecimento de projetos internacionais.
-O teu objetivo é realizar uma auditoria técnica ao documento, usando uma abordagem de BENCHMARKING.
+# --- MATRIZ JURÍDICA ---
+legal_refs = {
+    "RJAIA (DL 151-B/2013) - Versão Consolidada": "https://diariodarepublica.pt/dr/legislacao-consolidada/decreto-lei/2013-116043164",
+    "REDE NATURA (DL 140/99)": "https://diariodarepublica.pt/dr/legislacao-consolidada/decreto-lei/1999-34460975",
+    "RUÍDO (RGR - DL 9/2007)": "https://diariodarepublica.pt/dr/legislacao-consolidada/decreto-lei/2007-34526556",
+    "ÁGUA (Lei 58/2005)": "https://diariodarepublica.pt/dr/legislacao-consolidada/lei/2005-34563267",
+    "RESÍDUOS (RGGR)": "https://diariodarepublica.pt/dr/legislacao-consolidada/decreto-lei/2020-150917243"
+}
+legal_context_str = "\n".join([f"- {k}: {v}" for k, v in legal_refs.items()])
 
-O texto de entrada contém marcadores `--- PÁGINA X ---`. Usa-os OBRIGATORIAMENTE para fundamentar a análise.
+# --- PROMPT (Instruímos a IA a usar Markdown para facilitar a formatação) ---
+default_prompt = f"""
+Atua como um Perito Sénior em Engenharia do Ambiente e Jurista.
+Realiza uma auditoria técnica e legal ao EIA.
+
+CONTEXTO LEGISLATIVO (Links para DRE Consolidado):
+{legal_context_str}
+
+Usa a formatação Markdown para estruturar a tua resposta:
+- Usa `## 1. TÍTULO` para os capítulos principais.
+- Usa `### Subtítulo` se necessário.
+- Usa `**negrito**` para destacar pontos chave.
+- Usa listas com `-` para enumerar medidas ou impactes.
 
 Estrutura o relatório EXATAMENTE nestes 7 Capítulos:
 
-1. RESUMO DETALHADO DO PROJETO
-   - Descreve a localização, enquadramento e componentes principais (Pág. X).
+## 1. ENQUADRAMENTO LEGAL E CONFORMIDADE
+   - O projeto enquadra-se no RJAIA? O estudo cita a legislação correta (versões vigentes)?
 
-2. PRINCIPAIS IMPACTES IDENTIFICADOS (Por Descritor)
-   - Analisa os descritores (Ecologia, Hídricos, Ruído, etc.) e identifica os impactes significativos citados no estudo.
+## 2. PRINCIPAIS IMPACTES (Técnico)
+   - Análise por descritor ambiental.
 
-3. MEDIDAS DE MITIGAÇÃO E COMPENSAÇÃO PROPOSTAS NO ESTUDO
-   - Lista o que o promotor propõe fazer.
+## 3. MEDIDAS DE MITIGAÇÃO PROPOSTAS
+   - Lista as medidas do promotor.
 
-4. ANÁLISE CRÍTICA E BENCHMARKING (O Ponto Mais Importante)
-   - Compara as medidas deste estudo com **Projetos Semelhantes e Boas Práticas Internacionais**.
-   - Identifica LACUNAS: O que é que costuma ser feito neste tipo de projetos (ex: fotovoltaico, eólico, pedreira, estrada) que NÃO está previsto aqui?
-   - Propõe **NOVAS MEDIDAS CONCRETAS** baseadas nessa comparação.
-   - Exemplo: "Em projetos semelhantes na Europa, aplica-se a medida X, que está ausente neste estudo."
+## 4. ANÁLISE CRÍTICA, BENCHMARKING E JURÍDICA
+   - As medidas cumprem os limites legais (ex: ruído)?
+   - Compara com boas práticas internacionais (Benchmarking).
+   - Propõe novas medidas concretas.
 
-5. FUNDAMENTAÇÃO (Referências de Página)
-   - Valida a tua análise indicando onde no texto original encontraste a informação. Ex: "(Pág. 45)".
+## 5. FUNDAMENTAÇÃO (Referências de Página)
+   - Usa sempre o formato `(Pág. X)`.
 
-6. CITAÇÕES RELEVANTES
-   - Transcreve 3 frases literais (entre aspas) do documento que evidenciem fragilidades ou assumam impactes severos.
+## 6. CITAÇÕES RELEVANTES
+   - Transcreve 3 frases entre aspas.
 
-7. CONCLUSÕES E PARECER TÉCNICO
-   - Emite parecer (Favorável/Condicionado/Desfavorável).
-   - Resume as novas medidas que TÊM de ser incluídas para viabilizar o projeto.
+## 7. CONCLUSÕES E PARECER
+   - Parecer Final fundamentado.
 
-Tom: Técnico, Exigente e Comparativo.
+Tom: Formal, Técnico e Jurídico.
 """
-instructions = st.text_area("Instruções (Prompt):", value=default_prompt, height=450)
+instructions = st.text_area("Instruções:", value=default_prompt, height=450)
 
-# --- Funções Técnicas ---
+# --- Funções Técnicas de IA ---
 def get_available_model(key):
     try:
         genai.configure(api_key=key)
-        models = list(genai.list_models())
-        valid_models = [m.name for m in models if 'generateContent' in m.supported_generation_methods]
-        if not valid_models: return None
-        # Prioridade Flash > Pro
-        for m in valid_models:
-            if 'flash' in m: return m
-        return valid_models[0]
+        return 'gemini-1.5-flash' 
     except:
         return None
 
-def extract_text_with_page_numbers(file):
+def extract_text_pypdf(file):
     text = ""
     try:
         reader = PdfReader(file)
         for i, page in enumerate(reader.pages):
             content = page.extract_text()
             if content:
-                page_marker = f"\n\n--- PÁGINA {i+1} ---\n"
-                text += page_marker + content
+                text += f"\n\n--- PÁGINA {i+1} ---\n{content}"
     except Exception as e:
-        return f"ERRO LEITURA: {str(e)}"
+        return f"ERRO: {str(e)}"
     return text
 
 def analyze_ai(text, prompt, key, model_name):
     try:
         genai.configure(api_key=key)
         model = genai.GenerativeModel(model_name)
-        
-        # Aumentamos o contexto para permitir análises profundas
-        safe_text = text[:500000] 
-        
-        full_prompt = f"{prompt}\n\n=== INÍCIO DO DOCUMENTO ===\n{safe_text}\n=== FIM DO DOCUMENTO ==="
-        
-        response = model.generate_content(full_prompt)
+        safe_text = text[:500000]
+        response = model.generate_content(f"{prompt}\n\nDADOS DO PDF:\n{safe_text}")
         return response.text
     except Exception as e:
-        return f"Erro na IA: {str(e)}"
+        return f"Erro IA: {str(e)}"
 
-def create_word_doc(content):
-    doc = Document()
-    style = doc.styles['Normal']
-    font = style.font
-    font.name = 'Calibri'
-    font.size = Pt(11)
-    
-    doc.add_heading('Parecer Técnico de Avaliação de Impacte Ambiental', 0)
-    p = doc.add_paragraph()
-    p.add_run(f'Data da Análise: {datetime.now().strftime("%d/%m/%Y")}').bold = True
-    doc.add_paragraph('---')
-    
-    doc.add_paragraph(content)
-    
-    section = doc.sections[0]
-    footer = section.footer
-    p = footer.paragraphs[0]
-    p.text = "Relatório gerado por IA com base na documentação submetida e Benchmarking internacional."
-    
-    bio = io.BytesIO()
-    doc.save(bio)
-    return bio
+# ==========================================
+# --- NOVAS FUNÇÕES: HELPERS DE FORMATAÇÃO WORD ---
+# ==========================================
 
-# --- Botão de Ação ---
-if st.button("🚀 Gerar Análise Crítica"):
-    if not api_key:
-        st.error("⚠️ Falta a API Key.")
-    elif not uploaded_file:
-        st.warning("⚠️ Falta o PDF.")
-    else:
-        with st.spinner("📄 A ler PDF e a mapear páginas..."):
-            model_name = get_available_model(api_key)
-            if not model_name:
-                st.error("Erro na API Key.")
-                st.stop()
-            pdf_text = extract_text_with_page_numbers(uploaded_file)
-            
-        with st.spinner("🌍 A realizar Benchmarking com projetos de referência..."):
-            result = analyze_ai(pdf_text, instructions, api_key, model_name)
-            
-            if "Erro" in result and len(result) < 200:
-                st.error(result)
-            else:
-                st.success("Análise de Benchmarking Concluída!")
-                with st.expander("Ver Relatório no Ecrã"):
-                    st.markdown(result)
-                
-                word_file = create_word_doc(result)
-                
-                st.download_button(
-                    label="⬇️ Descarregar Relatório Técnico (.docx)",
-                    data=word_file.getvalue(),
-                    file_name="Parecer_Tecnico_Benchmarking.docx",
-                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                    on_click=reset_app
-                )
+def format_bold_runs(paragraph, text):
+    """Deteta texto entre **asteriscos** e aplica negrito real no Word"""
+    # Divide o texto pelos asteriscos. As partes ímpares (1, 3, 5...) são as que estão em negrito.
+    parts = re.split(r'(\*\*.*?\*\*)', text)
+    for part in parts:
+        if part.startswith('**') and part.endswith('**'):
+            run = paragraph.add_run(part[2:-2]) # Remove os asteriscos
+            run.bold = True
+        else:
+            paragraph.add_run(part)
+
+def parse_markdown_to_docx(doc, markdown_text):
+    """Lê o texto da IA linha a linha e converte em elementos Word"""
+    for line in markdown_text.split('\n'):
+        line = line.strip()
+        if not line: continue # Ignora linhas vazias
+
+        # 1. Detetar Títulos (## e ###) e
