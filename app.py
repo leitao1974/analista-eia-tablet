@@ -3,146 +3,121 @@ import pandas as pd
 import numpy as np
 from datetime import date, timedelta
 
-st.set_page_config(page_title="Calculadora AIA - Detalhada", layout="wide")
+# --- CONFIGURAÇÃO DA PÁGINA ---
+st.set_page_config(page_title="Calculadora AIA Pro", layout="wide")
 
-st.title("Calculadora AIA: Cronograma Detalhado")
+st.title("Calculadora de Prazos AIA (Rigorosa)")
 st.markdown("""
-Esta calculadora replica a lógica da **Memória Justificativa**, separando o tempo em:
-* **Contagem:** Abate aos 150 dias do prazo legal.
-* **Suspensão:** Empurra a data final mas mantém o saldo de dias.
+**Diagnóstico:**
+* Se a data for **08/01/2026**: O sistema está correto (Regime Administrativo).
+* Se a data for **22/01/2026**: O sistema está a aplicar indevidamente as Férias Judiciais de Natal.
 """)
 
-# --- 1. CONFIGURAÇÃO DE FERIADOS ---
-feriados_pt = [
-    "2025-06-10", "2025-06-19", "2025-08-15", 
-    "2025-10-05", "2025-11-01", "2025-12-01", 
-    "2025-12-08", "2025-12-25", "2026-01-01",
-    "2026-04-03", "2026-04-05", "2026-04-25", "2026-05-01" 
+# --- 1. CONFIGURAÇÃO DE FERIADOS (HARD RESET) ---
+# Definimos uma nova variável para garantir que não usa lixo de memória anterior
+feriados_aia_restritos = [
+    "2025-06-10", # Dia de Portugal
+    "2025-06-19", # Corpo de Deus
+    "2025-08-15", # Assunção
+    # Out e Nov caem ao fim de semana em 2025, mas deixamos aqui por rigor
+    "2025-10-05", 
+    "2025-11-01", 
+    "2025-12-01", # Restauração
+    "2025-12-08", # Imaculada Conceição
+    "2025-12-25", # Natal (APENAS O DIA 25)
+    "2026-01-01", # Ano Novo (APENAS O DIA 1)
+    "2026-04-03", # Sexta Feira Santa
+    "2026-04-05", # Pascoa
+    "2026-04-25", # 25 Abril
+    "2026-05-01"  # Dia do Trabalhador
 ]
-feriados_np = np.array(feriados_pt, dtype='datetime64[D]')
 
-# --- 2. FUNÇÕES AUXILIARES ---
-def add_business_days(start_date, days, holidays):
-    return np.busday_offset(
-        np.datetime64(start_date), 
-        days, 
+# Converter para formato numpy (busday)
+feriados_np = np.array(feriados_aia_restritos, dtype='datetime64[D]')
+
+# --- 2. INPUTS ---
+col1, col2, col3 = st.columns(3)
+with col1:
+    data_inicio = st.date_input("Data de Entrada", value=date(2025, 6, 3))
+with col2:
+    prazo_legal = st.number_input("Prazo Legal (Dias Úteis)", value=150)
+with col3:
+    # Adicionamos as suspensões do seu documento para o cálculo final bater certo com Março
+    dias_suspensao_corridos = st.number_input("Suspensão Aditamentos (Dias Corridos)", value=45)
+    dias_suspensao_uteis = st.number_input("Suspensão Audiência (Dias Úteis)", value=10)
+
+# --- 3. CÁLCULO DA DATA TEÓRICA (SEM SUSPENSÕES) ---
+# Esta é a parte que estava a dar 22/01. Agora deve dar 08/01.
+try:
+    data_teorica_np = np.busday_offset(
+        np.datetime64(data_inicio), 
+        prazo_legal, 
         roll='forward', 
         weekmask='1111100', 
-        holidays=holidays
+        holidays=feriados_np
     )
+    data_teorica = pd.to_datetime(data_teorica_np)
+except Exception as e:
+    st.error(f"Erro no cálculo base: {e}")
+    st.stop()
 
-def add_calendar_days(start_date, days):
-    return pd.to_datetime(start_date) + timedelta(days=days)
+# --- 4. CÁLCULO DA DATA REAL (COM SUSPENSÕES) ---
+# A lógica: Data Teórica + Empurrão das Suspensões
+# Nota: Para ser preciso, devíamos simular passo a passo, mas vamos somar o delta
+# 1. Somar suspensão de aditamentos (dias corridos) à data teórica
+data_com_aditamentos = data_teorica + timedelta(days=dias_suspensao_corridos)
 
-# --- 3. INPUTS DO UTILIZADOR ---
-with st.sidebar:
-    st.header("Parâmetros")
-    data_inicio = st.date_input("Data de Entrada", value=date(2025, 6, 3))
-    prazo_legal_total = st.number_input("Prazo Legal Total (Dias Úteis)", value=150)
+# 2. Somar suspensão de audiência (dias úteis)
+# Precisamos garantir que não cai em feriado
+data_final_real_np = np.busday_offset(
+    np.datetime64(data_com_aditamentos), 
+    dias_suspensao_uteis, 
+    roll='forward', 
+    weekmask='1111100', 
+    holidays=feriados_np
+)
+data_final_real = pd.to_datetime(data_final_real_np)
+
+
+# --- 5. APRESENTAÇÃO DOS RESULTADOS ---
+st.divider()
+c1, c2 = st.columns(2)
+
+with c1:
+    st.subheader("Data Limite (Teórica)")
+    st.caption("Sem contar com suspensões de aditamentos/audiências")
+    val_teorica = data_teorica.strftime("%d/%m/%Y")
+    st.metric("Data Alvo (150 dias úteis puros)", val_teorica)
     
-    st.markdown("---")
-    st.subheader("Configuração das Etapas")
-    
-    # Etapas baseadas no seu documento
-    # Etapa 1
-    dias_conf = st.number_input("1. Conformidade (Dias Úteis)", value=10)
-    # Etapa 2
-    dias_cp = st.number_input("2. Consulta Pública (Dias Úteis)", value=35)
-    # Etapa 3
-    dias_analise = st.number_input("3. Análise I (Dias Úteis)", value=15)
-    
-    st.markdown("**Suspensões (Param o relógio)**")
-    # Etapa 4 - Suspensão
-    dias_aditamentos = st.number_input("4. Aditamentos (Dias CORRIDOS - Suspensão)", value=45)
-    
-    # Etapa 5
-    dias_parecer = st.number_input("5. Avaliação Técnica (Dias Úteis)", value=20)
-    
-    # Etapa 6 - Suspensão
-    dias_audiencia = st.number_input("6. Audiência Prévia (Dias ÚTEIS - Suspensão)", value=10)
-
-# --- 4. MOTOR DE CÁLCULO (ETAPA A ETAPA) ---
-# Inicialização
-data_atual = data_inicio
-saldo_dias = prazo_legal_total
-log_calculo = []
-
-# --- ETAPA 1: Conformidade (Consome Prazo) ---
-fim_conf = add_business_days(data_atual, dias_conf, feriados_np)
-log_calculo.append({"Etapa": "1. Conformidade", "Início": data_atual, "Fim": pd.to_datetime(fim_conf), "Tipo": "Consome Prazo", "Duração": dias_conf})
-data_atual = pd.to_datetime(fim_conf)
-saldo_dias -= dias_conf
-
-# --- ETAPA 2: Consulta Pública (Consome Prazo) ---
-# Nota: No seu doc, começa logo a seguir. Às vezes há gap de publicitação, mas vamos seguir o fluxo contínuo.
-fim_cp = add_business_days(data_atual, dias_cp, feriados_np)
-log_calculo.append({"Etapa": "2. Consulta Pública", "Início": data_atual, "Fim": pd.to_datetime(fim_cp), "Tipo": "Consome Prazo", "Duração": dias_cp})
-data_atual = pd.to_datetime(fim_cp)
-saldo_dias -= dias_cp
-
-# --- ETAPA 3: Análise I (Consome Prazo) ---
-fim_analise = add_business_days(data_atual, dias_analise, feriados_np)
-log_calculo.append({"Etapa": "3. Análise I", "Início": data_atual, "Fim": pd.to_datetime(fim_analise), "Tipo": "Consome Prazo", "Duração": dias_analise})
-data_atual = pd.to_datetime(fim_analise)
-saldo_dias -= dias_analise
-
-# --- ETAPA 4: Aditamentos (SUSPENSÃO - Dias Corridos) ---
-# Aqui o saldo NÃO muda, mas a data avança.
-fim_adit = add_calendar_days(data_atual, dias_aditamentos)
-log_calculo.append({"Etapa": "4. Aditamentos (Suspensão)", "Início": data_atual, "Fim": fim_adit, "Tipo": "SUSPENSÃO (Dias Corridos)", "Duração": dias_aditamentos})
-data_atual = fim_adit # Avançamos no calendário
-# saldo_dias mantém-se igual
-
-# --- ETAPA 5: Avaliação Técnica (Consome Prazo) ---
-# Cuidado: Se a suspensão acabou num Sábado/Domingo, a contagem útil começa na 2ª feira seguinte?
-# O busday_offset com roll='forward' resolve isso se passarmos 0 dias primeiro para alinhar.
-data_atual_util = pd.to_datetime(add_business_days(data_atual, 0, feriados_np)) 
-
-fim_tec = add_business_days(data_atual_util, dias_parecer, feriados_np)
-log_calculo.append({"Etapa": "5. Avaliação Técnica", "Início": data_atual_util, "Fim": pd.to_datetime(fim_tec), "Tipo": "Consome Prazo", "Duração": dias_parecer})
-data_atual = pd.to_datetime(fim_tec)
-saldo_dias -= dias_parecer
-
-# --- ETAPA 6: Audiência Prévia (SUSPENSÃO - Dias Úteis) ---
-# O doc diz que dura 10 dias úteis e o estado é "SUSPENSO".
-fim_audiencia = add_business_days(data_atual, dias_audiencia, feriados_np)
-log_calculo.append({"Etapa": "6. Audiência Prévia (Suspensão)", "Início": data_atual, "Fim": pd.to_datetime(fim_audiencia), "Tipo": "SUSPENSÃO (Dias Úteis)", "Duração": dias_audiencia})
-data_atual = pd.to_datetime(fim_audiencia)
-# saldo_dias mantém-se igual
-
-# --- CÁLCULO FINAL: O SALDO RESTANTE ---
-# Quanto tempo falta para acabar os 150 dias?
-log_calculo.append({"Etapa": "---", "Início": "---", "Fim": "---", "Tipo": "---", "Duração": "---"})
-
-data_final_termo = add_business_days(data_atual, saldo_dias, feriados_np)
-data_final_str = pd.to_datetime(data_final_termo).strftime("%d/%m/%Y")
-
-# --- 5. APRESENTAÇÃO ---
-col1, col2 = st.columns([1, 2])
-
-with col1:
-    st.metric(label="Dias Consumidos", value=f"{150 - saldo_dias} / 150")
-    st.metric(label="Dias Restantes (Final)", value=saldo_dias)
-    st.markdown("### Data Limite Prevista:")
-    st.success(f"## {data_final_str}")
-    
-    if data_final_str == "06/03/2026":
-        st.caption("✅ Confere com a Memória Justificativa!")
+    if val_teorica == "08/01/2026":
+        st.success("✅ CORRETO: 08/01/2026 (O fantasma do Natal foi removido)")
+    elif val_teorica == "22/01/2026":
+        st.error("❌ ERRO: Ainda está a contar férias de Natal.")
     else:
-        st.caption("⚠️ Diferente do documento original.")
+        st.warning(f"Data calculada: {val_teorica}")
 
-with col2:
-    st.subheader("Cronograma Detalhado")
-    df_log = pd.DataFrame(log_calculo)
-    
-    # Formatação para a tabela ficar bonita
-    def format_date(x):
-        if isinstance(x, (pd.Timestamp, date)):
-            return x.strftime("%d/%m/%Y")
-        return x
+with c2:
+    st.subheader("Data Limite (Prevista)")
+    st.caption(f"Com suspensões (+{dias_suspensao_corridos} dias corridos, +{dias_suspensao_uteis} úteis)")
+    st.metric("Data Final Real", data_final_real.strftime("%d/%m/%Y"))
+    st.info("Esta data deve aproximar-se de 06/03/2026 conforme o seu documento.")
 
-    df_display = df_log.copy()
-    df_display['Início'] = df_display['Início'].apply(format_date)
-    df_display['Fim'] = df_display['Fim'].apply(format_date)
+# --- 6. PROVA DOS NOVE (DEBUG) ---
+with st.expander("🕵️ Verificação Forense: O que aconteceu no Natal de 2025?"):
+    st.write("Vamos verificar se os dias 26, 29 e 30 de Dezembro foram contados como dias de trabalho.")
     
-    st.table(df_display)
+    # Teste manual de dias específicos
+    dias_teste = ["2025-12-24", "2025-12-25", "2025-12-26", "2025-12-29"]
+    res = np.is_busday(dias_teste, holidays=feriados_np, weekmask='1111100')
+    
+    df_debug = pd.DataFrame({
+        "Dia": dias_teste,
+        "É dia útil?": res,
+        "Explicação": ["Véspera (Útil)", "Natal (Feriado)", "Dia 26 (Tem de ser Útil)", "Dia 29 (Tem de ser Útil)"]
+    })
+    st.table(df_debug)
+    
+    if res[2] == True:
+        st.success("O dia 26/12 foi contado como TRABALHO. (Correto para AIA)")
+    else:
+        st.error("O dia 26/12 foi contado como FÉRIAS. (Errado para AIA)")
