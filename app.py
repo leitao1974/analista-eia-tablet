@@ -10,7 +10,7 @@ import re
 import time
 
 # --- Configuração ---
-st.set_page_config(page_title="Analista EIA (Flash)", page_icon="⚡", layout="wide")
+st.set_page_config(page_title="Analista EIA (Final)", page_icon="✅", layout="wide")
 
 if 'uploader_key' not in st.session_state:
     st.session_state.uploader_key = 0
@@ -19,13 +19,13 @@ def reset_app():
     st.session_state.uploader_key += 1
 
 # --- Interface ---
-st.title("⚡ Analista EIA Pro (Versão Rápida)")
-st.markdown("Usa o modelo **Gemini 1.5 Flash** para evitar erros de quota e analisar documentos longos rapidamente.")
+st.title("✅ Analista EIA (Multi-Modelo)")
+st.markdown("Sistema blindado: Testa vários modelos de IA até encontrar um que funcione.")
 
 with st.sidebar:
     st.header("🔐 Configuração")
     api_key = st.text_input("Google API Key", type="password")
-    
+
 uploaded_file = st.file_uploader("Carregue o PDF", type=['pdf'], key=f"uploader_{st.session_state.uploader_key}")
 
 # --- MATRIZ JURÍDICA ---
@@ -45,10 +45,7 @@ Realiza uma auditoria técnica e legal ao EIA.
 CONTEXTO LEGISLATIVO:
 {legal_context_str}
 
-Usa Markdown para formatar:
-- `## TÍTULO` para capítulos.
-- `**negrito**` para destaques.
-- Listas com `-`.
+Usa Markdown: `## TÍTULO`, `**negrito**`, listas `-`.
 
 Estrutura o relatório EXATAMENTE nestes 7 Capítulos:
 
@@ -62,7 +59,7 @@ Estrutura o relatório EXATAMENTE nestes 7 Capítulos:
    - Lista as medidas.
 
 ## 4. ANÁLISE CRÍTICA E BENCHMARKING
-   - As medidas cumprem os limites legais? Comparação com boas práticas.
+   - Comparação com boas práticas e verificação legal.
 
 ## 5. FUNDAMENTAÇÃO
    - Usa `(Pág. X)`.
@@ -78,32 +75,37 @@ Tom: Formal, Técnico e Jurídico.
 instructions = st.text_area("Instruções:", value=default_prompt, height=300)
 
 # ==========================================
-# --- SELEÇÃO DE MODELO SEGURA (CORREÇÃO DO ERRO) ---
+# --- NOVA FUNÇÃO: FORÇA BRUTA DE MODELOS ---
 # ==========================================
-def get_safe_model(key):
+def try_candidate_models(key, text, prompt):
     """
-    Força o uso do 'gemini-1.5-flash' ou 'gemini-1.5-flash-latest'.
-    Evita modelos 'pro' ou experimentais que dão erro de quota.
+    Tenta uma lista de nomes conhecidos. O primeiro que funcionar ganha.
     """
-    try:
-        genai.configure(api_key=key)
-        models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
-        
-        # 1. Tenta encontrar especificamente o FLASH (que é gratuito e rápido)
-        for m in models:
-            if '1.5-flash' in m:
-                return m
-        
-        # 2. Se não houver flash, tenta o Pro 1.5
-        for m in models:
-            if '1.5-pro' in m:
-                return m
-                
-        # 3. Recurso final
-        return 'models/gemini-pro'
+    genai.configure(api_key=key)
+    
+    # Lista de prioridade (Do melhor para o mais antigo)
+    candidates = [
+        "gemini-1.5-flash",          # O ideal (rápido, gratuito)
+        "gemini-1.5-flash-latest",   # Alternativa
+        "gemini-1.5-pro",            # Mais potente (pode ter limite menor)
+        "gemini-1.0-pro",            # O clássico estável
+        "gemini-pro"                 # Nome antigo
+    ]
+    
+    safe_text = text[:800000] # Limite seguro
+    last_error = ""
 
-    except Exception as e:
-        return None
+    for model_name in candidates:
+        try:
+            # Tente gerar!
+            model = genai.GenerativeModel(model_name)
+            response = model.generate_content(f"{prompt}\n\nDADOS DO PDF:\n{safe_text}")
+            return response.text, model_name # SUCESSO! Devolve o texto e o nome usado
+        except Exception as e:
+            last_error = str(e)
+            continue # Se falhar, tenta o próximo da lista silenciosamente
+            
+    return f"ERRO FINAL: Nenhum modelo funcionou. Detalhe do último erro: {last_error}", None
 
 # --- Funções Técnicas ---
 def extract_text_pypdf(file):
@@ -117,25 +119,6 @@ def extract_text_pypdf(file):
     except Exception as e:
         return f"ERRO: {str(e)}"
     return text
-
-def analyze_ai(text, prompt, key, model_name):
-    try:
-        genai.configure(api_key=key)
-        model = genai.GenerativeModel(model_name)
-        # O Flash aguenta muito texto, 1 milhão de tokens.
-        # Cortamos aos 800.000 caracteres para ser seguro.
-        safe_text = text[:800000] 
-        
-        # Retry mechanism simples em caso de sobrecarga momentânea
-        try:
-            response = model.generate_content(f"{prompt}\n\nDADOS DO PDF:\n{safe_text}")
-        except Exception:
-            time.sleep(2) # Espera 2 segundos e tenta de novo
-            response = model.generate_content(f"{prompt}\n\nDADOS DO PDF:\n{safe_text}")
-            
-        return response.text
-    except Exception as e:
-        return f"Erro IA: {str(e)}"
 
 # --- Helpers Word ---
 def format_bold_runs(paragraph, text):
@@ -168,7 +151,6 @@ def create_professional_word_doc(content, legal_links):
     style_normal = doc.styles['Normal']
     style_normal.font.name = 'Calibri'
     style_normal.font.size = Pt(11)
-    style_normal.paragraph_format.space_after = Pt(8)
     
     style_h1 = doc.styles['Heading 1']
     style_h1.font.name = 'Cambria'
@@ -205,35 +187,30 @@ if st.button("🚀 Gerar Relatório Profissional", type="primary", use_container
     elif not uploaded_file:
         st.warning("⚠️ ERRO: Carregue um ficheiro PDF.")
     else:
-        with st.spinner("🔍 A selecionar o modelo Flash e a processar..."):
+        with st.spinner("⏳ A testar modelos de IA e a processar..."):
             
-            # 1. Seleção Segura do Modelo
-            model_name = get_safe_model(api_key)
+            # 1. Extrair
+            pdf_text = extract_text_pypdf(uploaded_file)
             
-            if not model_name:
-                st.error("Erro: Chave API inválida ou sem acesso a modelos.")
+            # 2. Analisar (USANDO A NOVA FUNÇÃO DE FORÇA BRUTA)
+            result, used_model = try_candidate_models(api_key, pdf_text, instructions)
+            
+            if "ERRO FINAL" in result:
+                st.error(result)
             else:
-                # 2. Extrair
-                pdf_text = extract_text_pypdf(uploaded_file)
+                st.success(f"✅ Sucesso! (Modelo que funcionou: {used_model})")
+                with st.expander("Ver Texto"):
+                    st.write(result)
                 
-                # 3. Analisar
-                result = analyze_ai(pdf_text, instructions, api_key, model_name)
+                # 3. Word
+                word_file = create_professional_word_doc(result, legal_refs)
                 
-                if "Erro" in result and len(result) < 200:
-                    st.error(result)
-                else:
-                    st.success(f"✅ Sucesso! (Modelo usado: {model_name})")
-                    with st.expander("Ver Texto"):
-                        st.write(result)
-                    
-                    # 4. Word
-                    word_file = create_professional_word_doc(result, legal_refs)
-                    
-                    st.download_button(
-                        label="⬇️ DOWNLOAD RELATÓRIO WORD (.docx)", 
-                        data=word_file.getvalue(), 
-                        file_name="Parecer_Tecnico_EIA.docx",
-                        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                        on_click=reset_app,
-                        type="primary"
-                    )
+                st.download_button(
+                    label="⬇️ DOWNLOAD RELATÓRIO WORD (.docx)", 
+                    data=word_file.getvalue(), 
+                    file_name="Parecer_Tecnico_Final.docx",
+                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                    on_click=reset_app,
+                    type="primary"
+                )
+
