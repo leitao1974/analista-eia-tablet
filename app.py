@@ -22,7 +22,6 @@ def reset_app():
 # --- 1. BASE DE DADOS LEGISLATIVA (RJAIA COMPLETO) ---
 # ==========================================
 
-# Leis Transversais (Aplicam-se a tudo)
 COMMON_LAWS = {
     "RJAIA (DL 151-B/2013)": "https://diariodarepublica.pt/dr/legislacao-consolidada/decreto-lei/2013-116043164",
     "REDE NATURA (DL 140/99)": "https://diariodarepublica.pt/dr/legislacao-consolidada/decreto-lei/1999-34460975",
@@ -30,7 +29,6 @@ COMMON_LAWS = {
     "ÁGUA (Lei 58/2005)": "https://diariodarepublica.pt/dr/legislacao-consolidada/lei/2005-34563267"
 }
 
-# Leis Específicas por Setor (Baseado nos Anexos do RJAIA)
 SPECIFIC_LAWS = {
     "1. Agricultura, Silvicultura e Aquicultura": {
         "ATIVIDADE PECUÁRIA (NREAP)": "https://diariodarepublica.pt/dr/legislacao-consolidada/decreto-lei/2008-34480678",
@@ -86,9 +84,7 @@ st.markdown("Análise Técnica e Legal adaptada aos setores definidos nos Anexos
 with st.sidebar:
     st.header("🔐 1. Configuração")
     
-    # === ÁREA PARA COLOCAR A CHAVE FIXA ===
     CHAVE_FIXA = "" 
-    # ======================================
 
     if CHAVE_FIXA:
         api_key = CHAVE_FIXA
@@ -112,14 +108,12 @@ with st.sidebar:
 
     st.divider()
     
-    # SELEÇÃO DA TIPOLOGIA (Lista Completa)
     st.header("🏗️ 2. Tipologia (Anexos RJAIA)")
     project_type = st.selectbox(
         "Selecione o setor de atividade:",
         list(SPECIFIC_LAWS.keys()) + ["Outra Tipologia"]
     )
     
-    # Construção dinâmica da lista de leis
     active_laws = COMMON_LAWS.copy() 
     if project_type in SPECIFIC_LAWS:
         active_laws.update(SPECIFIC_LAWS[project_type])
@@ -127,11 +121,16 @@ with st.sidebar:
         with st.expander("Ver leis aplicáveis"):
             st.write(active_laws)
 
-uploaded_file = st.file_uploader("Carregue o PDF", type=['pdf'], key=f"uploader_{st.session_state.uploader_key}")
+# === ALTERAÇÃO AQUI: UPLOAD MÚLTIPLO ===
+uploaded_files = st.file_uploader(
+    "Carregue os PDFs (EIA, RNT, Anexos)", 
+    type=['pdf'], 
+    accept_multiple_files=True, # Permite selecionar vários
+    key=f"uploader_{st.session_state.uploader_key}"
+)
 
 legal_context_str = "\n".join([f"- {k}: {v}" for k, v in active_laws.items()])
 
-# --- PROMPT ATUALIZADO (INVISÍVEL NA APP) ---
 instructions = f"""
 Atua como Perito Sénior em Engenharia do Ambiente e Jurista.
 Realiza uma auditoria técnica e legal ao EIA de um projeto do setor: {project_type.upper()}.
@@ -175,36 +174,36 @@ Tom: Formal, Técnico e Jurídico.
 # --- 3. FUNÇÕES TÉCNICAS (LIMPEZA E WORD) ---
 # ==========================================
 
-def extract_text_pypdf(file):
-    text = ""
-    try:
-        reader = PdfReader(file)
-        for i, page in enumerate(reader.pages):
-            content = page.extract_text()
-            if content:
-                text += f"\n\n--- PÁGINA {i+1} ---\n{content}"
-    except Exception as e:
-        return f"ERRO: {str(e)}"
-    return text
+# === FUNÇÃO DE EXTRAÇÃO ATUALIZADA PARA MÚLTIPLOS FICHEIROS ===
+def extract_text_from_uploads(files):
+    full_text = ""
+    for file in files:
+        try:
+            # Adiciona um cabeçalho para a IA saber qual é o ficheiro
+            full_text += f"\n\n=== INÍCIO DO FICHEIRO: {file.name} ===\n"
+            reader = PdfReader(file)
+            for i, page in enumerate(reader.pages):
+                content = page.extract_text()
+                if content:
+                    full_text += f"\n[Pág {i+1} - {file.name}]\n{content}"
+        except Exception as e:
+            full_text += f"\n\nERRO AO LER FICHEIRO {file.name}: {str(e)}\n"
+    return full_text
 
 def analyze_ai(text, prompt, key, model_name):
     try:
         genai.configure(api_key=key)
         model = genai.GenerativeModel(model_name)
-        safe_text = text[:800000]
-        response = model.generate_content(f"{prompt}\n\nDADOS DO PDF:\n{safe_text}")
+        # Limite de caracteres seguro para evitar erros de payload excessivo
+        # O Gemini Pro suporta muito mais, mas 800k caracteres é um bom limite de segurança
+        safe_text = text[:800000] 
+        response = model.generate_content(f"{prompt}\n\nDADOS DOS DOCUMENTOS CARREGADOS:\n{safe_text}")
         return response.text
     except Exception as e:
         return f"Erro IA: {str(e)}"
 
-# === FUNÇÕES DE WORD MELHORADAS (JUSTIFICADO E SEM BOLD NO FINAL) ===
-
 def clean_ai_formatting(text):
-    """Remove formatação Markdown para criar texto limpo (sem negrito)."""
-    # Remove asteriscos duplos (negrito) e simples (itálico)
     text = text.replace('**', '').replace('__', '')
-    
-    # Correção de maiúsculas excessivas
     if len(text) > 40 and text.isupper():
         return text.capitalize()
     words = text.split()
@@ -215,7 +214,6 @@ def clean_ai_formatting(text):
     return text
 
 def format_bold_runs(paragraph, text):
-    """Aplica negrito apenas se houver marcadores **, caso contrário texto normal."""
     parts = re.split(r'(\*\*.*?\*\*)', text)
     for part in parts:
         if part.startswith('**') and part.endswith('**'):
@@ -225,43 +223,40 @@ def format_bold_runs(paragraph, text):
             paragraph.add_run(part)
 
 def parse_markdown_to_docx(doc, markdown_text):
-    in_critical_section = False # Controla se estamos nas Conclusões
+    in_critical_section = False
     
     for line in markdown_text.split('\n'):
         line = line.strip()
         if not line: continue
         
-        # Títulos (H1)
         if line.startswith('## ') or re.match(r'^\d+\.\s', line):
             clean = re.sub(r'^(##\s|\d+\.\s)', '', line).replace('*', '')
             doc.add_heading(clean.title(), level=1)
             
-            # Se for capítulo de Conclusões ou Citações, ativa o modo "limpo" (sem bold)
             if "CITAÇÕES" in clean.upper() or "CONCLUSÕES" in clean.upper():
                 in_critical_section = True
             else:
                 in_critical_section = False
         
-        # Títulos (H2)
         elif line.startswith('### '):
             clean = line[4:].replace('*', '')
-            doc.add_heading(clean, level=2)
+            if in_critical_section:
+                p = doc.add_paragraph()
+                p.add_run(clean_ai_formatting(clean))
+            else:
+                doc.add_heading(clean, level=2)
             
-        # Listas
         elif line.startswith('- ') or line.startswith('* '):
             p = doc.add_paragraph(style='List Bullet')
             clean_line = line[2:]
             if in_critical_section:
-                # Nas conclusões, removemos o negrito forçosamente
                 p.add_run(clean_ai_formatting(clean_line))
             else:
                 format_bold_runs(p, clean_line)
                 
-        # Parágrafos Normais
         else:
             p = doc.add_paragraph()
             if in_critical_section:
-                # Nas conclusões, removemos o negrito forçosamente
                 p.add_run(clean_ai_formatting(line))
             else:
                 format_bold_runs(p, line)
@@ -269,11 +264,9 @@ def parse_markdown_to_docx(doc, markdown_text):
 def create_professional_word_doc(content, legal_links, project_type):
     doc = Document()
     
-    # --- CONFIGURAÇÃO DE ESTILO GERAL ---
     style_normal = doc.styles['Normal']
     style_normal.font.name = 'Calibri'
     style_normal.font.size = Pt(11)
-    # AQUI ESTÁ A MUDANÇA PARA JUSTIFICADO:
     style_normal.paragraph_format.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
     
     style_h1 = doc.styles['Heading 1']
@@ -282,17 +275,14 @@ def create_professional_word_doc(content, legal_links, project_type):
     style_h1.font.bold = True
     style_h1.font.color.rgb = RGBColor(0, 51, 102)
 
-    # Título do Relatório
     title = doc.add_heading(f'PARECER TÉCNICO EIA', 0)
     title.alignment = WD_ALIGN_PARAGRAPH.CENTER
     doc.add_paragraph(f'Setor: {project_type}').alignment = WD_ALIGN_PARAGRAPH.CENTER
     doc.add_paragraph(f'Data: {datetime.now().strftime("%d/%m/%Y")}').alignment = WD_ALIGN_PARAGRAPH.CENTER
     doc.add_paragraph('---')
 
-    # Gera o corpo do texto
     parse_markdown_to_docx(doc, content)
     
-    # Anexos
     doc.add_page_break()
     doc.add_heading('ANEXO: Legislação Aplicável (Links DRE)', level=1)
     
@@ -315,18 +305,21 @@ if st.button("🚀 Gerar Relatório", type="primary", use_container_width=True):
         st.error("⚠️ Insira a API Key.")
     elif not selected_model:
         st.error("⚠️ Nenhum modelo selecionado.")
-    elif not uploaded_file:
-        st.warning("⚠️ Carregue o PDF.")
+    elif not uploaded_files: # Verifica se a lista não está vazia
+        st.warning("⚠️ Carregue pelo menos um PDF.")
     else:
-        with st.spinner(f"A processar EIA de {project_type}..."):
-            pdf_text = extract_text_pypdf(uploaded_file)
+        num_files = len(uploaded_files)
+        with st.spinner(f"A processar {num_files} ficheiro(s) do EIA de {project_type}..."):
+            # Usa a nova função de extração múltipla
+            pdf_text = extract_text_from_uploads(uploaded_files)
+            
             result = analyze_ai(pdf_text, instructions, api_key, selected_model)
             
             if "Erro" in result and len(result) < 200:
                 st.error(result)
             else:
                 st.success("✅ Sucesso!")
-                with st.expander("Ver Texto"):
+                with st.expander("Ver Texto Gerado"):
                     st.write(result)
                 word_file = create_professional_word_doc(result, active_laws, project_type)
                 st.download_button("⬇️ Download Word", word_file.getvalue(), f"Parecer_EIA.docx", on_click=reset_app, type="primary")
