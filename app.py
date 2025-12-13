@@ -193,7 +193,7 @@ A tua missão é CRUCIFERAR a informação. Não confies na memória.
 
 REGRAS DE FORMATAÇÃO E CITAÇÃO:
 1. "Sentence case" apenas.
-2. Não uses negrito (`**`) nas conclusões.
+2. Não uses negrito (`**`) nas conclusões, análises críticas e fundamentações.
 3. RASTREABILIDADE TOTAL:
    - Quando citares um dado do EIA, escreve: *(EIA - NomeFicheiro, pág. X)*.
    - Quando citares uma obrigação legal, escreve: *(Lei - NomeFicheiroLei, Artigo X)*.
@@ -202,7 +202,7 @@ Estrutura o relatório EXATAMENTE nestes 8 Capítulos:
 
 ## 1. ENQUADRAMENTO LEGAL E CONFORMIDADE
    - Validação do enquadramento no RJAIA usando a lei fornecida.
-   - Verificação das condicionantes legais.
+   - Verificação das condicionantes legais (REN, RAN, etc.).
 
 ## 2. DESCRIÇÃO DO PROJETO
    - Resumo técnico com referências de página.
@@ -273,13 +273,13 @@ def analyze_ai(project_text, legal_text, prompt, key, model_name):
     except Exception as e:
         return f"Erro IA: {str(e)}"
 
-# === FUNÇÕES WORD (LIMPEZA DEFINITIVA DO CAPÍTULO 8) ===
+# === FUNÇÕES WORD (LIMPEZA REFORÇADA) ===
 
 def clean_ai_formatting(text):
     """
     Remove TODA a formatação Markdown (*, #, _) e corrige excesso de maiúsculas.
     """
-    # Remove qualquer sequência de markdown
+    # Remove qualquer sequência de markdown (negrito, itálico, cabeçalhos)
     text = re.sub(r'[\*_#]', '', text)
     
     # Corrige Title Case/ALL CAPS para Sentence case
@@ -287,6 +287,7 @@ def clean_ai_formatting(text):
         uppercase_count = sum(1 for c in text if c.isupper())
         total_letters = sum(1 for c in text if c.isalpha())
         
+        # Se mais de 30% das letras forem maiúsculas, normaliza
         if total_letters > 0 and (uppercase_count / total_letters) > 0.30:
             text = text.capitalize()
             
@@ -310,14 +311,33 @@ def parse_markdown_to_docx(doc, markdown_text):
         
         # Detetar Títulos Principais (H1)
         if line.startswith('## ') or re.match(r'^\d+\.\s', line):
-            clean = re.sub(r'^(##\s|\d+\.\s)', '', line).replace('*', '')
-            doc.add_heading(clean.title(), level=1)
+            # Limpa marcadores para criar o título
+            clean_title = re.sub(r'^(##\s|\d+\.\s)', '', line).replace('*', '')
+            doc.add_heading(clean_title.title(), level=1)
             
-            # ATIVA O MODO LIMPEZA para Fundamentação, Citações e Conclusões (Cap 6, 7 e 8)
-            upper_clean = clean.upper()
+            # ATIVA O MODO LIMPEZA para Capítulos 5, 6, 7 e 8
+            # Verifica se começa por "5.", "6.", "7.", "8." na linha ORIGINAL
+            # OU se contém palavras chave nos títulos limpos
+            original_upper = line.upper()
+            clean_upper = clean_title.upper()
             
-            # Detetor robusto: Procura palavras-chave OU numeração dos capítulos finais
-            if "FUNDAMENTAÇÃO" in upper_clean or "CITAÇÕES" in upper_clean or "CONCLUS" in upper_clean or clean.strip().startswith("6.") or clean.strip().startswith("7.") or clean.strip().startswith("8."):
+            # Lógica de deteção robusta
+            is_chapter_5_plus = (
+                original_upper.startswith("## 5") or original_upper.startswith("5.") or
+                original_upper.startswith("## 6") or original_upper.startswith("6.") or
+                original_upper.startswith("## 7") or original_upper.startswith("7.") or
+                original_upper.startswith("## 8") or original_upper.startswith("8.")
+            )
+            
+            has_keywords = (
+                "ANÁLISE" in clean_upper or 
+                "CRÍTICA" in clean_upper or 
+                "FUNDAMENTAÇÃO" in clean_upper or 
+                "CITAÇÕES" in clean_upper or 
+                "CONCLUS" in clean_upper
+            )
+            
+            if is_chapter_5_plus or has_keywords:
                 in_critical_section = True
             else:
                 in_critical_section = False
