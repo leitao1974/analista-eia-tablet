@@ -22,7 +22,6 @@ def reset_app():
 # --- 1. BASE DE DADOS LEGISLATIVA (EXAUSTIVA) ---
 # ==========================================
 
-# Leis Transversais (Aplicáveis à maioria dos projetos EIA)
 COMMON_LAWS = {
     "RJAIA (Avaliação Impacte Ambiental - DL 151-B/2013)": "https://diariodarepublica.pt/dr/legislacao-consolidada/decreto-lei/2013-116043164",
     "LUA (Licenciamento Único Ambiental - DL 75/2015)": "https://diariodarepublica.pt/dr/legislacao-consolidada/decreto-lei/2015-106562356",
@@ -38,7 +37,6 @@ COMMON_LAWS = {
     "Espécies Invasoras (DL 92/2019)": "https://diariodarepublica.pt/dr/legislacao-consolidada/decreto-lei/2019-123023867"
 }
 
-# Leis Específicas por Setor
 SPECIFIC_LAWS = {
     "1. Agricultura, Silvicultura e Aquicultura": {
         "NREAP (Atividade Pecuária - DL 81/2013)": "https://diariodarepublica.pt/dr/legislacao-consolidada/decreto-lei/2013-34789570",
@@ -204,7 +202,7 @@ Estrutura o relatório EXATAMENTE nestes 8 Capítulos:
 
 ## 1. ENQUADRAMENTO LEGAL E CONFORMIDADE
    - Validação do enquadramento no RJAIA usando a lei fornecida.
-   - Verificação das condicionantes legais (REN, RAN, etc.).
+   - Verificação das condicionantes legais.
 
 ## 2. DESCRIÇÃO DO PROJETO
    - Resumo técnico com referências de página.
@@ -275,12 +273,26 @@ def analyze_ai(project_text, legal_text, prompt, key, model_name):
     except Exception as e:
         return f"Erro IA: {str(e)}"
 
-# === FUNÇÕES WORD ===
+# === FUNÇÕES WORD (ATUALIZADAS PARA LIMPEZA TOTAL) ===
 
 def clean_ai_formatting(text):
-    text = text.replace('**', '').replace('__', '').replace('###', '').replace('##', '')
-    if len(text) > 5 and text.isupper():
-        return text.capitalize()
+    """
+    Remove TODA a formatação Markdown e corrige excesso de maiúsculas (Title Case).
+    Garante que as Conclusões ficam limpas.
+    """
+    # 1. Remove marcadores Markdown (*, #, _)
+    text = re.sub(r'[*_#]', '', text)
+    
+    # 2. Corrige Title Case (Ex: "A Falta De Monitorização...") para Sentence Case
+    # Lógica: Se mais de 30% das letras são maiúsculas, provavelmente é Title Case ou ALL CAPS.
+    if len(text) > 10:
+        uppercase_count = sum(1 for c in text if c.isupper())
+        total_letters = sum(1 for c in text if c.isalpha())
+        
+        if total_letters > 0 and (uppercase_count / total_letters) > 0.30:
+            # Converte para minúsculas e capitaliza a primeira letra da frase
+            text = text.capitalize()
+            
     return text.strip()
 
 def format_bold_runs(paragraph, text):
@@ -299,34 +311,46 @@ def parse_markdown_to_docx(doc, markdown_text):
         line = line.strip()
         if not line: continue
         
+        # Detetar Títulos Principais (H1)
         if line.startswith('## ') or re.match(r'^\d+\.\s', line):
             clean = re.sub(r'^(##\s|\d+\.\s)', '', line).replace('*', '')
             doc.add_heading(clean.title(), level=1)
+            
+            # ATIVA O MODO LIMPEZA para os últimos capítulos
+            # "CONCLUS" apanha "Conclusões", "Conclusão", "Conclusoes"
             upper_clean = clean.upper()
-            if "FUNDAMENTAÇÃO" in upper_clean or "CITAÇÕES" in upper_clean or "CONCLUSÕES" in upper_clean:
+            if "FUNDAMENTAÇÃO" in upper_clean or "CITAÇÕES" in upper_clean or "CONCLUS" in upper_clean or clean.strip().startswith("7.") or clean.strip().startswith("8."):
                 in_critical_section = True
             else:
                 in_critical_section = False
         
+        # Detetar Subtítulos (H2 ou ###)
         elif line.startswith('### '):
             clean = line[4:].replace('*', '')
+            
             if in_critical_section:
+                # MODO CRÍTICO: Converte subtítulos em parágrafos normais SEM NEGRITO
                 p = doc.add_paragraph()
                 p.add_run(clean_ai_formatting(clean))
             else:
                 doc.add_heading(clean, level=2)
             
+        # Listas (Bullets)
         elif line.startswith('- ') or line.startswith('* '):
             p = doc.add_paragraph(style='List Bullet')
             clean_line = line[2:]
+            
             if in_critical_section:
+                # MODO CRÍTICO: Remove negrito e corrige capitalização
                 p.add_run(clean_ai_formatting(clean_line))
             else:
                 format_bold_runs(p, clean_line)
                 
+        # Parágrafos Normais
         else:
             p = doc.add_paragraph()
             if in_critical_section:
+                # MODO CRÍTICO: Remove negrito e corrige capitalização
                 p.add_run(clean_ai_formatting(line))
             else:
                 format_bold_runs(p, line)
