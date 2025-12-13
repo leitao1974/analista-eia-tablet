@@ -19,7 +19,7 @@ def reset_app():
     st.session_state.uploader_key += 1
 
 # ==========================================
-# --- 1. BASE DE DADOS LEGISLATIVA (EXAUSTIVA) ---
+# --- 1. BASE DE DADOS LEGISLATIVA ---
 # ==========================================
 
 COMMON_LAWS = {
@@ -273,24 +273,21 @@ def analyze_ai(project_text, legal_text, prompt, key, model_name):
     except Exception as e:
         return f"Erro IA: {str(e)}"
 
-# === FUNÇÕES WORD (ATUALIZADAS PARA LIMPEZA TOTAL) ===
+# === FUNÇÕES WORD (LIMPEZA DEFINITIVA DO CAPÍTULO 8) ===
 
 def clean_ai_formatting(text):
     """
-    Remove TODA a formatação Markdown e corrige excesso de maiúsculas (Title Case).
-    Garante que as Conclusões ficam limpas.
+    Remove TODA a formatação Markdown (*, #, _) e corrige excesso de maiúsculas.
     """
-    # 1. Remove marcadores Markdown (*, #, _)
-    text = re.sub(r'[*_#]', '', text)
+    # Remove qualquer sequência de markdown
+    text = re.sub(r'[\*_#]', '', text)
     
-    # 2. Corrige Title Case (Ex: "A Falta De Monitorização...") para Sentence Case
-    # Lógica: Se mais de 30% das letras são maiúsculas, provavelmente é Title Case ou ALL CAPS.
+    # Corrige Title Case/ALL CAPS para Sentence case
     if len(text) > 10:
         uppercase_count = sum(1 for c in text if c.isupper())
         total_letters = sum(1 for c in text if c.isalpha())
         
         if total_letters > 0 and (uppercase_count / total_letters) > 0.30:
-            # Converte para minúsculas e capitaliza a primeira letra da frase
             text = text.capitalize()
             
     return text.strip()
@@ -316,10 +313,11 @@ def parse_markdown_to_docx(doc, markdown_text):
             clean = re.sub(r'^(##\s|\d+\.\s)', '', line).replace('*', '')
             doc.add_heading(clean.title(), level=1)
             
-            # ATIVA O MODO LIMPEZA para os últimos capítulos
-            # "CONCLUS" apanha "Conclusões", "Conclusão", "Conclusoes"
+            # ATIVA O MODO LIMPEZA para Fundamentação, Citações e Conclusões (Cap 6, 7 e 8)
             upper_clean = clean.upper()
-            if "FUNDAMENTAÇÃO" in upper_clean or "CITAÇÕES" in upper_clean or "CONCLUS" in upper_clean or clean.strip().startswith("7.") or clean.strip().startswith("8."):
+            
+            # Detetor robusto: Procura palavras-chave OU numeração dos capítulos finais
+            if "FUNDAMENTAÇÃO" in upper_clean or "CITAÇÕES" in upper_clean or "CONCLUS" in upper_clean or clean.strip().startswith("6.") or clean.strip().startswith("7.") or clean.strip().startswith("8."):
                 in_critical_section = True
             else:
                 in_critical_section = False
@@ -341,7 +339,7 @@ def parse_markdown_to_docx(doc, markdown_text):
             clean_line = line[2:]
             
             if in_critical_section:
-                # MODO CRÍTICO: Remove negrito e corrige capitalização
+                # MODO CRÍTICO: Remove negrito e formatação
                 p.add_run(clean_ai_formatting(clean_line))
             else:
                 format_bold_runs(p, clean_line)
@@ -350,7 +348,7 @@ def parse_markdown_to_docx(doc, markdown_text):
         else:
             p = doc.add_paragraph()
             if in_critical_section:
-                # MODO CRÍTICO: Remove negrito e corrige capitalização
+                # MODO CRÍTICO: Remove negrito e formatação
                 p.add_run(clean_ai_formatting(line))
             else:
                 format_bold_runs(p, line)
