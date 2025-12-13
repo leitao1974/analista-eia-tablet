@@ -81,7 +81,7 @@ SPECIFIC_LAWS = {
 # ==========================================
 
 st.title("⚖️ Análise")
-st.markdown("Auditoria Técnica e Legal adaptada aos setores definidos nos Anexos I e II do DL 151-B/2013.")
+st.markdown("Análise Técnica e Legal adaptada aos setores definidos nos Anexos I e II do DL 151-B/2013.")
 
 with st.sidebar:
     st.header("🔐 1. Configuração")
@@ -296,7 +296,6 @@ if st.button("🚀 Gerar Relatório", type="primary", use_container_width=True):
     else:
         with st.spinner(f"A processar EIA de {project_type}..."):
             pdf_text = extract_text_pypdf(uploaded_file)
-            # A variável 'instructions' agora contém o prompt atualizado invisível
             result = analyze_ai(pdf_text, instructions, api_key, selected_model)
             
             if "Erro" in result and len(result) < 200:
