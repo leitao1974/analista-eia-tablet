@@ -130,7 +130,7 @@ uploaded_files = st.file_uploader(
 
 legal_context_str = "\n".join([f"- {k}: {v}" for k, v in active_laws.items()])
 
-# --- PROMPT ATUALIZADO (8 CAPÍTULOS) ---
+# --- PROMPT ATUALIZADO (CITAÇÕES + 8 CAPÍTULOS) ---
 instructions = f"""
 Atua como Perito Sénior em Engenharia do Ambiente e Jurista.
 Realiza uma auditoria técnica e legal ao EIA de um projeto do setor: {project_type.upper()}.
@@ -138,9 +138,12 @@ Realiza uma auditoria técnica e legal ao EIA de um projeto do setor: {project_t
 CONTEXTO LEGISLATIVO (Prioritário):
 {legal_context_str}
 
-REGRAS DE FORMATAÇÃO:
+REGRAS DE FORMATAÇÃO E CITAÇÃO (CRÍTICO):
 1. "Sentence case" apenas. PROIBIDO MAIÚSCULAS em frases inteiras.
 2. Não uses negrito (`**`) nas conclusões.
+3. **RASTREABILIDADE (NOVO):** Sempre que mencionares um dado técnico (áreas, volumes, localização, valores de ruído, etc.), deves indicar a fonte e a página no final da frase.
+   - O texto que vais ler tem etiquetas como [FONTE: EIA.pdf | PÁGINA: 10].
+   - No teu relatório, escreve a referência assim: *(EIA.pdf, pág. 10)*.
 
 Estrutura o relatório EXATAMENTE nestes 8 Capítulos:
 
@@ -149,26 +152,27 @@ Estrutura o relatório EXATAMENTE nestes 8 Capítulos:
    - Verifica o cumprimento da legislação específica listada acima.
 
 ## 2. DESCRIÇÃO DO PROJETO
-   - Resumo técnico conciso. Identifica: Localização (Concelho/Freguesia), Área de Intervenção, Tipologia Principal, e números chave (ex: volumes, produção, caudais, cérceas).
+   - Resumo técnico conciso com referências de página. Identifica: Localização, Área de Intervenção, Tipologia, e números chave (volumes, produção).
 
 ## 3. PRINCIPAIS IMPACTES (Técnico)
-   - Análise por descritor ambiental.
+   - Análise por descritor ambiental (cita as páginas onde os impactes estão descritos).
 
 ## 4. MEDIDAS DE MITIGAÇÃO PROPOSTAS
-   - Lista as medidas.
+   - Lista as medidas (cita as páginas).
 
 ## 5. ANÁLISE CRÍTICA E DETEÇÃO DE ERROS (FOCO ESPECÍFICO)
-   - **Plantas de Localização:** Verifica no texto referências a escalas adequadas (1:25.000 ou superior), sistema de coordenadas oficial (PT-TM06/ETRS89) e menção a sobreposições com servidões (REN, RAN, Rede Natura). Aponta se faltarem legendas descritivas claras.
-   - **Ruído (Ambiente Sonoro):** Verifica se o estudo cumpre o RGR (DL 9/2007). Confirma se foram usados os indicadores corretos (Lden e Ln) e se existe identificação clara de "Recetores Sensíveis". Aponta falta de monitorização de base se detetada.
-   - **Geral:** As medidas são suficientes face à lei e melhores práticas do setor {project_type}?
+   - **Plantas de Localização:** Verifica no texto referências a escalas adequadas (1:25.000 ou superior), sistema de coordenadas oficial (PT-TM06/ETRS89) e menção a sobreposições com servidões (REN, RAN, Rede Natura).
+   - **Ruído (Ambiente Sonoro):** Verifica se o estudo cumpre o RGR (DL 9/2007). Confirma se foram usados os indicadores corretos (Lden e Ln) e se existe identificação clara de "Recetores Sensíveis".
+   - **Geral:** As medidas são suficientes?
 
 ## 6. FUNDAMENTAÇÃO
-   - Explicação técnica e jurídica das falhas detetadas.
+   - Explicação técnica das falhas.
 
 ## 7. CITAÇÕES RELEVANTES
+   - Transcreve trechos curtos do PDF que provem a tua análise.
 
 ## 8. CONCLUSÕES
-   - Parecer Final fundamentado (Favorável / Favorável Condicionado / Desfavorável).
+   - Parecer Final fundamentado.
 
 Tom: Formal, Técnico e Jurídico.
 """
@@ -181,12 +185,14 @@ def extract_text_from_uploads(files):
     full_text = ""
     for file in files:
         try:
+            # Etiqueta clara para a IA saber qual é o ficheiro
             full_text += f"\n\n=== INÍCIO DO FICHEIRO: {file.name} ===\n"
             reader = PdfReader(file)
             for i, page in enumerate(reader.pages):
                 content = page.extract_text()
                 if content:
-                    full_text += f"\n[Pág {i+1} - {file.name}]\n{content}"
+                    # Inserção da etiqueta de rastreabilidade em cada página
+                    full_text += f"\n[FONTE: {file.name} | PÁGINA: {i+1}]\n{content}"
         except Exception as e:
             full_text += f"\n\nERRO AO LER FICHEIRO {file.name}: {str(e)}\n"
     return full_text
@@ -201,17 +207,20 @@ def analyze_ai(text, prompt, key, model_name):
     except Exception as e:
         return f"Erro IA: {str(e)}"
 
-# === FUNÇÕES WORD ===
+# === FUNÇÕES WORD (LIMPEZA AGRESSIVA NO FINAL) ===
 
 def clean_ai_formatting(text):
-    """Remove formatação Markdown e corrige capitalização."""
-    text = text.replace('**', '').replace('__', '').replace('###', '')
+    """Remove toda a formatação Markdown (negrito, itálico, cabeçalhos) para texto limpo."""
+    # Remove marcadores Markdown comuns
+    text = text.replace('**', '').replace('__', '').replace('###', '').replace('##', '')
+    
+    # Corrige se a IA gerar tudo em maiúsculas
     if len(text) > 5 and text.isupper():
         return text.capitalize()
-    return text
+    return text.strip()
 
 def format_bold_runs(paragraph, text):
-    """Aplica negrito apenas se houver marcadores **."""
+    """Aplica negrito apenas se houver marcadores **, caso contrário texto normal."""
     parts = re.split(r'(\*\*.*?\*\*)', text)
     for part in parts:
         if part.startswith('**') and part.endswith('**'):
@@ -227,33 +236,36 @@ def parse_markdown_to_docx(doc, markdown_text):
         line = line.strip()
         if not line: continue
         
-        # Títulos Principais (H1)
+        # Detetar Títulos Principais (H1)
         if line.startswith('## ') or re.match(r'^\d+\.\s', line):
             clean = re.sub(r'^(##\s|\d+\.\s)', '', line).replace('*', '')
             doc.add_heading(clean.title(), level=1)
             
-            # Deteta secções finais (a partir do capítulo 6 agora)
+            # ATIVA O MODO LIMPEZA para os últimos capítulos (6, 7 e 8)
             upper_clean = clean.upper()
             if "FUNDAMENTAÇÃO" in upper_clean or "CITAÇÕES" in upper_clean or "CONCLUSÕES" in upper_clean:
                 in_critical_section = True
             else:
                 in_critical_section = False
         
-        # Subtítulos (H2 ou ###)
+        # Detetar Subtítulos (H2 ou ###)
         elif line.startswith('### '):
             clean = line[4:].replace('*', '')
+            
             if in_critical_section:
-                # Converte subtítulo em parágrafo normal SEM NEGRITO nas conclusões
+                # MODO CRÍTICO: Converte subtítulos em parágrafos normais SEM NEGRITO
                 p = doc.add_paragraph()
                 p.add_run(clean_ai_formatting(clean))
             else:
                 doc.add_heading(clean, level=2)
             
-        # Listas
+        # Listas (Bullets)
         elif line.startswith('- ') or line.startswith('* '):
             p = doc.add_paragraph(style='List Bullet')
             clean_line = line[2:]
+            
             if in_critical_section:
+                # MODO CRÍTICO: Remove qualquer negrito dentro da lista
                 p.add_run(clean_ai_formatting(clean_line))
             else:
                 format_bold_runs(p, clean_line)
@@ -262,6 +274,7 @@ def parse_markdown_to_docx(doc, markdown_text):
         else:
             p = doc.add_paragraph()
             if in_critical_section:
+                # MODO CRÍTICO: Texto limpo, sem negrito
                 p.add_run(clean_ai_formatting(line))
             else:
                 format_bold_runs(p, line)
