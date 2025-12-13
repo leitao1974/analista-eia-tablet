@@ -10,7 +10,7 @@ import re
 import time
 
 # --- Configuração ---
-st.set_page_config(page_title="Analista EIA (RJAIA Completo)", page_icon="⚖️", layout="wide")
+st.set_page_config(page_title="Análise", page_icon="⚖️", layout="wide")
 
 if 'uploader_key' not in st.session_state:
     st.session_state.uploader_key = 0
@@ -80,12 +80,22 @@ SPECIFIC_LAWS = {
 # --- 2. INTERFACE E LÓGICA ---
 # ==========================================
 
-st.title("⚖️ Analista EIA Pro (Todas as Tipologias RJAIA)")
+st.title("⚖️ Análise")
 st.markdown("Auditoria Técnica e Legal adaptada aos setores definidos nos Anexos I e II do DL 151-B/2013.")
 
 with st.sidebar:
     st.header("🔐 1. Configuração")
-    api_key = st.text_input("Google API Key", type="password")
+    
+    # === ÁREA PARA COLOCAR A CHAVE FIXA ===
+    # Se quiser fixar, coloque a chave dentro das aspas abaixo:
+    CHAVE_FIXA = "" 
+    # ======================================
+
+    if CHAVE_FIXA:
+        api_key = CHAVE_FIXA
+        st.success(f"🔑 Chave API Carregada")
+    else:
+        api_key = st.text_input("Google API Key", type="password")
     
     selected_model = None
     if api_key:
@@ -122,8 +132,8 @@ uploaded_file = st.file_uploader("Carregue o PDF", type=['pdf'], key=f"uploader_
 
 legal_context_str = "\n".join([f"- {k}: {v}" for k, v in active_laws.items()])
 
-# --- PROMPT ---
-default_prompt = f"""
+# --- PROMPT ATUALIZADO (INVISÍVEL NA APP) ---
+instructions = f"""
 Atua como Perito Sénior em Engenharia do Ambiente e Jurista.
 Realiza uma auditoria técnica e legal ao EIA de um projeto do setor: {project_type.upper()}.
 
@@ -146,11 +156,13 @@ Estrutura o relatório EXATAMENTE nestes 7 Capítulos:
 ## 3. MEDIDAS DE MITIGAÇÃO PROPOSTAS
    - Lista as medidas.
 
-## 4. ANÁLISE CRÍTICA E BENCHMARKING
-   - As medidas são suficientes face à lei e melhores práticas do setor {project_type}?
-   - Identifica lacunas legais.
+## 4. ANÁLISE CRÍTICA E DETEÇÃO DE ERROS (FOCO ESPECÍFICO)
+   - **Plantas de Localização:** Verifica no texto referências a escalas adequadas (1:25.000 ou superior), sistema de coordenadas oficial (PT-TM06/ETRS89) e menção a sobreposições com servidões (REN, RAN, Rede Natura). Aponta se faltarem legendas descritivas claras.
+   - **Ruído (Ambiente Sonoro):** Verifica se o estudo cumpre o RGR (DL 9/2007). Confirma se foram usados os indicadores corretos (Lden e Ln) e se existe identificação clara de "Recetores Sensíveis". Aponta falta de monitorização de base se detetada.
+   - **Geral:** As medidas são suficientes face à lei e melhores práticas do setor {project_type}?
 
-## 5. FUNDAMENTAÇÃO (Pág. X)
+## 5. FUNDAMENTAÇÃO
+   - Explicação técnica das falhas detetadas.
 
 ## 6. CITAÇÕES RELEVANTES
 
@@ -159,7 +171,6 @@ Estrutura o relatório EXATAMENTE nestes 7 Capítulos:
 
 Tom: Formal, Técnico e Jurídico.
 """
-instructions = st.text_area("Instruções:", value=default_prompt, height=300)
 
 # ==========================================
 # --- 3. FUNÇÕES TÉCNICAS (LIMPEZA E WORD) ---
@@ -285,6 +296,7 @@ if st.button("🚀 Gerar Relatório", type="primary", use_container_width=True):
     else:
         with st.spinner(f"A processar EIA de {project_type}..."):
             pdf_text = extract_text_pypdf(uploaded_file)
+            # A variável 'instructions' agora contém o prompt atualizado invisível
             result = analyze_ai(pdf_text, instructions, api_key, selected_model)
             
             if "Erro" in result and len(result) < 200:
