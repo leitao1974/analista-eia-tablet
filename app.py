@@ -121,16 +121,16 @@ with st.sidebar:
         with st.expander("Ver leis aplicáveis"):
             st.write(active_laws)
 
-# === ALTERAÇÃO AQUI: UPLOAD MÚLTIPLO ===
 uploaded_files = st.file_uploader(
     "Carregue os PDFs (EIA, RNT, Anexos)", 
     type=['pdf'], 
-    accept_multiple_files=True, # Permite selecionar vários
+    accept_multiple_files=True, 
     key=f"uploader_{st.session_state.uploader_key}"
 )
 
 legal_context_str = "\n".join([f"- {k}: {v}" for k, v in active_laws.items()])
 
+# --- PROMPT ATUALIZADO (8 CAPÍTULOS) ---
 instructions = f"""
 Atua como Perito Sénior em Engenharia do Ambiente e Jurista.
 Realiza uma auditoria técnica e legal ao EIA de um projeto do setor: {project_type.upper()}.
@@ -142,30 +142,33 @@ REGRAS DE FORMATAÇÃO:
 1. "Sentence case" apenas. PROIBIDO MAIÚSCULAS em frases inteiras.
 2. Não uses negrito (`**`) nas conclusões.
 
-Estrutura o relatório EXATAMENTE nestes 7 Capítulos:
+Estrutura o relatório EXATAMENTE nestes 8 Capítulos:
 
 ## 1. ENQUADRAMENTO LEGAL E CONFORMIDADE
    - O projeto enquadra-se corretamente no RJAIA (Anexo I ou II)?
    - Verifica o cumprimento da legislação específica listada acima.
 
-## 2. PRINCIPAIS IMPACTES (Técnico)
+## 2. DESCRIÇÃO DO PROJETO
+   - Resumo técnico conciso. Identifica: Localização (Concelho/Freguesia), Área de Intervenção, Tipologia Principal, e números chave (ex: volumes, produção, caudais, cérceas).
+
+## 3. PRINCIPAIS IMPACTES (Técnico)
    - Análise por descritor ambiental.
 
-## 3. MEDIDAS DE MITIGAÇÃO PROPOSTAS
+## 4. MEDIDAS DE MITIGAÇÃO PROPOSTAS
    - Lista as medidas.
 
-## 4. ANÁLISE CRÍTICA E DETEÇÃO DE ERROS (FOCO ESPECÍFICO)
+## 5. ANÁLISE CRÍTICA E DETEÇÃO DE ERROS (FOCO ESPECÍFICO)
    - **Plantas de Localização:** Verifica no texto referências a escalas adequadas (1:25.000 ou superior), sistema de coordenadas oficial (PT-TM06/ETRS89) e menção a sobreposições com servidões (REN, RAN, Rede Natura). Aponta se faltarem legendas descritivas claras.
    - **Ruído (Ambiente Sonoro):** Verifica se o estudo cumpre o RGR (DL 9/2007). Confirma se foram usados os indicadores corretos (Lden e Ln) e se existe identificação clara de "Recetores Sensíveis". Aponta falta de monitorização de base se detetada.
    - **Geral:** As medidas são suficientes face à lei e melhores práticas do setor {project_type}?
 
-## 5. FUNDAMENTAÇÃO
-   - Explicação técnica das falhas detetadas.
+## 6. FUNDAMENTAÇÃO
+   - Explicação técnica e jurídica das falhas detetadas.
 
-## 6. CITAÇÕES RELEVANTES
+## 7. CITAÇÕES RELEVANTES
 
-## 7. CONCLUSÕES
-   - Parecer Final fundamentado.
+## 8. CONCLUSÕES
+   - Parecer Final fundamentado (Favorável / Favorável Condicionado / Desfavorável).
 
 Tom: Formal, Técnico e Jurídico.
 """
@@ -174,12 +177,10 @@ Tom: Formal, Técnico e Jurídico.
 # --- 3. FUNÇÕES TÉCNICAS (LIMPEZA E WORD) ---
 # ==========================================
 
-# === FUNÇÃO DE EXTRAÇÃO ATUALIZADA PARA MÚLTIPLOS FICHEIROS ===
 def extract_text_from_uploads(files):
     full_text = ""
     for file in files:
         try:
-            # Adiciona um cabeçalho para a IA saber qual é o ficheiro
             full_text += f"\n\n=== INÍCIO DO FICHEIRO: {file.name} ===\n"
             reader = PdfReader(file)
             for i, page in enumerate(reader.pages):
@@ -194,26 +195,23 @@ def analyze_ai(text, prompt, key, model_name):
     try:
         genai.configure(api_key=key)
         model = genai.GenerativeModel(model_name)
-        # Limite de caracteres seguro para evitar erros de payload excessivo
-        # O Gemini Pro suporta muito mais, mas 800k caracteres é um bom limite de segurança
         safe_text = text[:800000] 
         response = model.generate_content(f"{prompt}\n\nDADOS DOS DOCUMENTOS CARREGADOS:\n{safe_text}")
         return response.text
     except Exception as e:
         return f"Erro IA: {str(e)}"
 
+# === FUNÇÕES WORD ===
+
 def clean_ai_formatting(text):
-    text = text.replace('**', '').replace('__', '')
-    if len(text) > 40 and text.isupper():
+    """Remove formatação Markdown e corrige capitalização."""
+    text = text.replace('**', '').replace('__', '').replace('###', '')
+    if len(text) > 5 and text.isupper():
         return text.capitalize()
-    words = text.split()
-    if len(words) > 6:
-        upper_starts = sum(1 for w in words if w and w[0].isupper())
-        if upper_starts / len(words) > 0.7:
-            return text.capitalize()
     return text
 
 def format_bold_runs(paragraph, text):
+    """Aplica negrito apenas se houver marcadores **."""
     parts = re.split(r'(\*\*.*?\*\*)', text)
     for part in parts:
         if part.startswith('**') and part.endswith('**'):
@@ -229,23 +227,29 @@ def parse_markdown_to_docx(doc, markdown_text):
         line = line.strip()
         if not line: continue
         
+        # Títulos Principais (H1)
         if line.startswith('## ') or re.match(r'^\d+\.\s', line):
             clean = re.sub(r'^(##\s|\d+\.\s)', '', line).replace('*', '')
             doc.add_heading(clean.title(), level=1)
             
-            if "CITAÇÕES" in clean.upper() or "CONCLUSÕES" in clean.upper():
+            # Deteta secções finais (a partir do capítulo 6 agora)
+            upper_clean = clean.upper()
+            if "FUNDAMENTAÇÃO" in upper_clean or "CITAÇÕES" in upper_clean or "CONCLUSÕES" in upper_clean:
                 in_critical_section = True
             else:
                 in_critical_section = False
         
+        # Subtítulos (H2 ou ###)
         elif line.startswith('### '):
             clean = line[4:].replace('*', '')
             if in_critical_section:
+                # Converte subtítulo em parágrafo normal SEM NEGRITO nas conclusões
                 p = doc.add_paragraph()
                 p.add_run(clean_ai_formatting(clean))
             else:
                 doc.add_heading(clean, level=2)
             
+        # Listas
         elif line.startswith('- ') or line.startswith('* '):
             p = doc.add_paragraph(style='List Bullet')
             clean_line = line[2:]
@@ -254,6 +258,7 @@ def parse_markdown_to_docx(doc, markdown_text):
             else:
                 format_bold_runs(p, clean_line)
                 
+        # Parágrafos Normais
         else:
             p = doc.add_paragraph()
             if in_critical_section:
@@ -305,14 +310,12 @@ if st.button("🚀 Gerar Relatório", type="primary", use_container_width=True):
         st.error("⚠️ Insira a API Key.")
     elif not selected_model:
         st.error("⚠️ Nenhum modelo selecionado.")
-    elif not uploaded_files: # Verifica se a lista não está vazia
+    elif not uploaded_files:
         st.warning("⚠️ Carregue pelo menos um PDF.")
     else:
         num_files = len(uploaded_files)
         with st.spinner(f"A processar {num_files} ficheiro(s) do EIA de {project_type}..."):
-            # Usa a nova função de extração múltipla
             pdf_text = extract_text_from_uploads(uploaded_files)
-            
             result = analyze_ai(pdf_text, instructions, api_key, selected_model)
             
             if "Erro" in result and len(result) < 200:
