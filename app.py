@@ -193,7 +193,7 @@ A tua missão é CRUCIFERAR a informação. Não confies na memória.
 
 REGRAS DE FORMATAÇÃO E CITAÇÃO:
 1. "Sentence case" apenas.
-2. Não uses negrito (`**`) nas conclusões, análises críticas e fundamentações.
+2. Não uses negrito (`**`) nas conclusões.
 3. RASTREABILIDADE TOTAL:
    - Quando citares um dado do EIA, escreve: *(EIA - NomeFicheiro, pág. X)*.
    - Quando citares uma obrigação legal, escreve: *(Lei - NomeFicheiroLei, Artigo X)*.
@@ -202,7 +202,7 @@ Estrutura o relatório EXATAMENTE nestes 8 Capítulos:
 
 ## 1. ENQUADRAMENTO LEGAL E CONFORMIDADE
    - Validação do enquadramento no RJAIA usando a lei fornecida.
-   - Verificação das condicionantes legais (REN, RAN, etc.).
+   - Verificação das condicionantes legais.
 
 ## 2. DESCRIÇÃO DO PROJETO
    - Resumo técnico com referências de página.
@@ -273,21 +273,20 @@ def analyze_ai(project_text, legal_text, prompt, key, model_name):
     except Exception as e:
         return f"Erro IA: {str(e)}"
 
-# === FUNÇÕES WORD (LIMPEZA REFORÇADA) ===
+# === FUNÇÕES WORD (LÓGICA DE LIMPEZA INFALÍVEL) ===
 
 def clean_ai_formatting(text):
     """
     Remove TODA a formatação Markdown (*, #, _) e corrige excesso de maiúsculas.
     """
-    # Remove qualquer sequência de markdown (negrito, itálico, cabeçalhos)
-    text = re.sub(r'[\*_#]', '', text)
+    # 1. Remove marcadores Markdown
+    text = re.sub(r'[*_#]', '', text)
     
-    # Corrige Title Case/ALL CAPS para Sentence case
+    # 2. Corrige Title Case (Maiúsculas em todas as palavras)
     if len(text) > 10:
         uppercase_count = sum(1 for c in text if c.isupper())
         total_letters = sum(1 for c in text if c.isalpha())
         
-        # Se mais de 30% das letras forem maiúsculas, normaliza
         if total_letters > 0 and (uppercase_count / total_letters) > 0.30:
             text = text.capitalize()
             
@@ -303,74 +302,62 @@ def format_bold_runs(paragraph, text):
             paragraph.add_run(part)
 
 def parse_markdown_to_docx(doc, markdown_text):
-    in_critical_section = False
+    # Variável de estado global para controlar a limpeza
+    cleaning_mode = False 
     
     for line in markdown_text.split('\n'):
         line = line.strip()
         if not line: continue
         
-        # Detetar Títulos Principais (H1)
-        if line.startswith('## ') or re.match(r'^\d+\.\s', line):
-            # Limpa marcadores para criar o título
-            clean_title = re.sub(r'^(##\s|\d+\.\s)', '', line).replace('*', '')
-            doc.add_heading(clean_title.title(), level=1)
-            
-            # ATIVA O MODO LIMPEZA para Capítulos 5, 6, 7 e 8
-            # Verifica se começa por "5.", "6.", "7.", "8." na linha ORIGINAL
-            # OU se contém palavras chave nos títulos limpos
-            original_upper = line.upper()
-            clean_upper = clean_title.upper()
-            
-            # Lógica de deteção robusta
-            is_chapter_5_plus = (
-                original_upper.startswith("## 5") or original_upper.startswith("5.") or
-                original_upper.startswith("## 6") or original_upper.startswith("6.") or
-                original_upper.startswith("## 7") or original_upper.startswith("7.") or
-                original_upper.startswith("## 8") or original_upper.startswith("8.")
-            )
-            
-            has_keywords = (
-                "ANÁLISE" in clean_upper or 
-                "CRÍTICA" in clean_upper or 
-                "FUNDAMENTAÇÃO" in clean_upper or 
-                "CITAÇÕES" in clean_upper or 
-                "CONCLUS" in clean_upper
-            )
-            
-            if is_chapter_5_plus or has_keywords:
-                in_critical_section = True
-            else:
-                in_critical_section = False
+        # --- LÓGICA DE DETEÇÃO DE CAPÍTULOS ---
+        # Remove marcadores para verificar o conteúdo "cru"
+        clean_check = re.sub(r'[*#_]', '', line).strip().upper()
         
-        # Detetar Subtítulos (H2 ou ###)
-        elif line.startswith('### '):
-            clean = line[4:].replace('*', '')
-            
-            if in_critical_section:
-                # MODO CRÍTICO: Converte subtítulos em parágrafos normais SEM NEGRITO
-                p = doc.add_paragraph()
-                p.add_run(clean_ai_formatting(clean))
-            else:
-                doc.add_heading(clean, level=2)
-            
-        # Listas (Bullets)
-        elif line.startswith('- ') or line.startswith('* '):
-            p = doc.add_paragraph(style='List Bullet')
-            clean_line = line[2:]
-            
-            if in_critical_section:
-                # MODO CRÍTICO: Remove negrito e formatação
-                p.add_run(clean_ai_formatting(clean_line))
-            else:
-                format_bold_runs(p, clean_line)
-                
-        # Parágrafos Normais
-        else:
+        # Ativa o modo de limpeza se entrarmos nos capítulos críticos
+        if clean_check.startswith("5.") or "ANÁLISE CRÍTICA" in clean_check:
+            cleaning_mode = True
+        elif clean_check.startswith("6.") or "FUNDAMENTAÇÃO" in clean_check:
+            cleaning_mode = True
+        elif clean_check.startswith("7.") or "CITAÇÕES" in clean_check:
+            cleaning_mode = True
+        elif clean_check.startswith("8.") or "CONCLUS" in clean_check:
+            cleaning_mode = True
+        
+        # (Opcional) Desativa se voltar a um capítulo inicial (caso a IA baralhe)
+        elif clean_check.startswith("1.") or clean_check.startswith("2."):
+            cleaning_mode = False
+
+        # --- PROCESSAMENTO DA LINHA ---
+        
+        # Se for um título (começa com #)
+        if line.startswith('#'):
+            clean_title = clean_ai_formatting(line.replace('#', ''))
+            # Define o nível do título pelo número de cardinais
+            level = 1 if line.startswith('## ') else 2
+            doc.add_heading(clean_title, level=level)
+            continue # Passa para a próxima linha
+
+        # Se for texto normal ou lista
+        if cleaning_mode:
+            # MODO LIMPEZA: Ignora qualquer formatação, escreve texto limpo
             p = doc.add_paragraph()
-            if in_critical_section:
-                # MODO CRÍTICO: Remove negrito e formatação
-                p.add_run(clean_ai_formatting(line))
+            # Se for lista, mantém a estrutura visual de lista no Word se desejar, 
+            # ou converte tudo para parágrafo normal. Aqui convertemos para parágrafo.
+            clean_line = clean_ai_formatting(line)
+            # Remove o "hífen" da lista se existir para ficar texto corrido ou mantém bullet
+            if line.startswith('- ') or line.startswith('* '):
+                 p.style = 'List Bullet'
+                 clean_line = clean_ai_formatting(line[2:])
+            
+            p.add_run(clean_line)
+            
+        else:
+            # MODO NORMAL (Capítulos 1-4): Permite negritos
+            if line.startswith('- ') or line.startswith('* '):
+                p = doc.add_paragraph(style='List Bullet')
+                format_bold_runs(p, line[2:])
             else:
+                p = doc.add_paragraph()
                 format_bold_runs(p, line)
 
 def create_professional_word_doc(content, active_laws_links, local_laws_list, project_type):
