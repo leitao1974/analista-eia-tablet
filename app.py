@@ -87,7 +87,6 @@ with st.sidebar:
     st.header("🔐 1. Configuração")
     
     # === ÁREA PARA COLOCAR A CHAVE FIXA ===
-    # Se quiser fixar, coloque a chave dentro das aspas abaixo:
     CHAVE_FIXA = "" 
     # ======================================
 
@@ -198,8 +197,14 @@ def analyze_ai(text, prompt, key, model_name):
     except Exception as e:
         return f"Erro IA: {str(e)}"
 
+# === FUNÇÕES DE WORD MELHORADAS (JUSTIFICADO E SEM BOLD NO FINAL) ===
+
 def clean_ai_formatting(text):
-    text = text.replace('**', '') 
+    """Remove formatação Markdown para criar texto limpo (sem negrito)."""
+    # Remove asteriscos duplos (negrito) e simples (itálico)
+    text = text.replace('**', '').replace('__', '')
+    
+    # Correção de maiúsculas excessivas
     if len(text) > 40 and text.isupper():
         return text.capitalize()
     words = text.split()
@@ -209,8 +214,8 @@ def clean_ai_formatting(text):
             return text.capitalize()
     return text
 
-# Helpers Word
 def format_bold_runs(paragraph, text):
+    """Aplica negrito apenas se houver marcadores **, caso contrário texto normal."""
     parts = re.split(r'(\*\*.*?\*\*)', text)
     for part in parts:
         if part.startswith('**') and part.endswith('**'):
@@ -220,40 +225,56 @@ def format_bold_runs(paragraph, text):
             paragraph.add_run(part)
 
 def parse_markdown_to_docx(doc, markdown_text):
-    in_critical_section = False
+    in_critical_section = False # Controla se estamos nas Conclusões
+    
     for line in markdown_text.split('\n'):
         line = line.strip()
         if not line: continue
         
+        # Títulos (H1)
         if line.startswith('## ') or re.match(r'^\d+\.\s', line):
             clean = re.sub(r'^(##\s|\d+\.\s)', '', line).replace('*', '')
             doc.add_heading(clean.title(), level=1)
+            
+            # Se for capítulo de Conclusões ou Citações, ativa o modo "limpo" (sem bold)
             if "CITAÇÕES" in clean.upper() or "CONCLUSÕES" in clean.upper():
                 in_critical_section = True
             else:
                 in_critical_section = False
+        
+        # Títulos (H2)
         elif line.startswith('### '):
             clean = line[4:].replace('*', '')
             doc.add_heading(clean, level=2)
+            
+        # Listas
         elif line.startswith('- ') or line.startswith('* '):
             p = doc.add_paragraph(style='List Bullet')
             clean_line = line[2:]
             if in_critical_section:
+                # Nas conclusões, removemos o negrito forçosamente
                 p.add_run(clean_ai_formatting(clean_line))
             else:
                 format_bold_runs(p, clean_line)
+                
+        # Parágrafos Normais
         else:
             p = doc.add_paragraph()
             if in_critical_section:
+                # Nas conclusões, removemos o negrito forçosamente
                 p.add_run(clean_ai_formatting(line))
             else:
                 format_bold_runs(p, line)
 
 def create_professional_word_doc(content, legal_links, project_type):
     doc = Document()
+    
+    # --- CONFIGURAÇÃO DE ESTILO GERAL ---
     style_normal = doc.styles['Normal']
     style_normal.font.name = 'Calibri'
     style_normal.font.size = Pt(11)
+    # AQUI ESTÁ A MUDANÇA PARA JUSTIFICADO:
+    style_normal.paragraph_format.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
     
     style_h1 = doc.styles['Heading 1']
     style_h1.font.name = 'Cambria'
@@ -261,14 +282,17 @@ def create_professional_word_doc(content, legal_links, project_type):
     style_h1.font.bold = True
     style_h1.font.color.rgb = RGBColor(0, 51, 102)
 
+    # Título do Relatório
     title = doc.add_heading(f'PARECER TÉCNICO EIA', 0)
     title.alignment = WD_ALIGN_PARAGRAPH.CENTER
     doc.add_paragraph(f'Setor: {project_type}').alignment = WD_ALIGN_PARAGRAPH.CENTER
     doc.add_paragraph(f'Data: {datetime.now().strftime("%d/%m/%Y")}').alignment = WD_ALIGN_PARAGRAPH.CENTER
     doc.add_paragraph('---')
 
+    # Gera o corpo do texto
     parse_markdown_to_docx(doc, content)
     
+    # Anexos
     doc.add_page_break()
     doc.add_heading('ANEXO: Legislação Aplicável (Links DRE)', level=1)
     
