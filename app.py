@@ -9,38 +9,8 @@ from datetime import datetime
 import re
 import os
 
-# --- Configuração OBRIGATÓRIA (Tem de ser a primeira linha de Streamlit) ---
+# --- Configuração OBRIGATÓRIA ---
 st.set_page_config(page_title="Análise", page_icon="⚖️", layout="wide")
-
-# ==========================================
-# --- 0. DIAGNÓSTICO (TEMPORÁRIO) ---
-# ==========================================
-st.title("⚖️ Análise")
-
-with st.expander("🕵️ DIAGNÓSTICO DE SISTEMA (Verificar Legislação)", expanded=True):
-    st.write(f"📂 **Pasta de Trabalho Atual:** `{os.getcwd()}`")
-    
-    # Verifica se a pasta legislacao existe
-    if os.path.exists("legislacao"):
-        st.success("✅ A pasta 'legislacao' FOI ENCONTRADA!")
-        files_inside = os.listdir("legislacao")
-        st.write(f"📜 **Ficheiros detetados dentro da pasta:**")
-        st.code(str(files_inside))
-        
-        if len(files_inside) == 0:
-            st.warning("⚠️ AVISO: A pasta existe, mas está VAZIA. O PDF não foi carregado corretamente.")
-        elif any(f.endswith('.pdf') for f in files_inside):
-            st.info("tudo parece estar correto. O sistema deve ler estes PDFs.")
-        else:
-            st.error("❌ A pasta existe, mas não tem ficheiros PDF (tem outros tipos?).")
-    else:
-        st.error("❌ ERRO CRÍTICO: A pasta 'legislacao' NÃO EXISTE neste diretório.")
-        st.write("Aqui está a lista do que existe na raiz do projeto (GitHub):")
-        st.code(str(os.listdir('.')))
-        st.caption("Dica: Se vê o 'app.py' na lista acima mas não vê 'legislacao', a pasta não foi enviada para o GitHub.")
-
-st.markdown("---")
-# ==========================================
 
 if 'uploader_key' not in st.session_state:
     st.session_state.uploader_key = 0
@@ -49,7 +19,98 @@ def reset_app():
     st.session_state.uploader_key += 1
 
 # ==========================================
-# --- 1. BASE DE DADOS LEGISLATIVA ---
+# --- 1. FUNÇÃO DE LEITURA (COM DIAGNÓSTICO) ---
+# ==========================================
+
+def load_legislation_knowledge_base(folder_path="legislacao"):
+    """Lê PDFs e regista erros detalhados para diagnóstico."""
+    legal_text = ""
+    file_list = []
+    debug_log = [] # Lista para guardar o histórico do que aconteceu
+    
+    if not os.path.exists(folder_path):
+        return "AVISO: Pasta não encontrada.", [], ["❌ A pasta 'legislacao' não existe."]
+
+    files = os.listdir(folder_path)
+    
+    if not files:
+        return "AVISO: Pasta vazia.", [], ["⚠️ A pasta existe mas está vazia."]
+
+    for filename in files:
+        # Ignora ficheiros de sistema ou ocultos
+        if filename.startswith('.'): 
+            continue
+            
+        full_path = os.path.join(folder_path, filename)
+        
+        # Verifica se é ficheiro ou pasta
+        if os.path.isdir(full_path):
+            debug_log.append(f"⚠️ '{filename}' é uma sub-pasta, não um ficheiro. A IA não lê sub-pastas.")
+            continue
+            
+        # Verifica extensão
+        if not filename.lower().endswith('.pdf'):
+            debug_log.append(f"⚠️ '{filename}' ignorado (não acaba em .pdf).")
+            continue
+
+        # Tenta ler o PDF
+        try:
+            reader = PdfReader(full_path)
+            # Tenta ler a primeira página para ver se não está corrompido
+            if len(reader.pages) > 0:
+                _ = reader.pages[0].extract_text()
+                
+            content = ""
+            for page in reader.pages:
+                content += page.extract_text() + "\n"
+            
+            legal_text += f"\n\n=== LEGISLAÇÃO OFICIAL: {filename} ===\n{content}"
+            file_list.append(filename)
+            debug_log.append(f"✅ '{filename}' carregado com sucesso ({len(reader.pages)} páginas).")
+            
+        except Exception as e:
+            debug_log.append(f"❌ ERRO CRÍTICO ao ler '{filename}': {str(e)}")
+            legal_text += f"\n[Erro ao ler lei {filename}: {str(e)}]\n"
+            
+    return legal_text, file_list, debug_log
+
+# Carrega a legislação (Executa imediatamente ao abrir a App)
+legal_knowledge_text, legal_files_list, load_logs = load_legislation_knowledge_base()
+
+# ==========================================
+# --- 0. MOSTRAR DIAGNÓSTICO NO TOPO ---
+# ==========================================
+st.title("⚖️ Análise")
+
+with st.expander("🕵️ RELATÓRIO DE DIAGNÓSTICO (Leia isto se tiver erros)", expanded=True):
+    st.write(f"📂 **Pasta de Trabalho:** `{os.getcwd()}`")
+    
+    if os.path.exists("legislacao"):
+        st.success(f"📂 Pasta 'legislacao' encontrada.")
+        st.write("📝 **Log de Tentativa de Leitura:**")
+        
+        if not load_logs:
+            st.warning("A pasta está vazia (sem ficheiros visíveis).")
+        else:
+            for log in load_logs:
+                if "✅" in log:
+                    st.success(log)
+                elif "❌" in log:
+                    st.error(log)
+                else:
+                    st.info(log)
+    else:
+        st.error("❌ A pasta 'legislacao' NÃO FOI ENCONTRADA.")
+
+    if not legal_files_list:
+        st.warning("⚠️ RESULTADO: Nenhuma lei foi carregada com sucesso para a memória da IA.")
+    else:
+        st.success(f"🚀 RESULTADO: {len(legal_files_list)} Leis carregadas e prontas a usar!")
+
+st.markdown("---")
+
+# ==========================================
+# --- 2. RESTO DA CONFIGURAÇÃO ---
 # ==========================================
 
 COMMON_LAWS = {
@@ -115,15 +176,12 @@ SPECIFIC_LAWS = {
 }
 
 # ==========================================
-# --- 2. INTERFACE E LÓGICA ---
+# --- 3. INTERFACE E LÓGICA ---
 # ==========================================
-
-st.markdown("Análise Técnica e Legal com validação cruzada contra Legislação Oficial.")
 
 with st.sidebar:
     st.header("🔐 1. Configuração")
     
-    # Campo para API Key manual (não guarda no código)
     api_key = st.text_input(
         "Google API Key", 
         type="password", 
@@ -156,6 +214,12 @@ with st.sidebar:
     active_laws_links = COMMON_LAWS.copy()
     if project_type in SPECIFIC_LAWS:
         active_laws_links.update(SPECIFIC_LAWS[project_type])
+    
+    # MOSTRA O STATUS NA BARRA LATERAL TAMBÉM
+    if legal_files_list:
+        st.success(f"📚 {len(legal_files_list)} Leis carregadas.")
+    else:
+        st.warning(f"⚠️ Nenhuma lei local.")
 
 uploaded_files = st.file_uploader(
     "Carregue os PDFs do PROJETO (EIA, RNT, Anexos)", 
@@ -163,49 +227,6 @@ uploaded_files = st.file_uploader(
     accept_multiple_files=True, 
     key=f"uploader_{st.session_state.uploader_key}"
 )
-
-# ==========================================
-# --- 3. CARREGAMENTO DA LEGISLAÇÃO (RAG) ---
-# ==========================================
-
-def load_legislation_knowledge_base(folder_path="legislacao"):
-    """Lê todos os PDFs na pasta 'legislacao' e retorna texto e lista de ficheiros."""
-    legal_text = ""
-    file_list = []
-    
-    if not os.path.exists(folder_path):
-        # Não criamos a pasta aqui porque no Cloud não temos permissão de escrita persistente
-        # A pasta tem de vir do GitHub
-        return "AVISO: Pasta 'legislacao' não detetada. Verifique o GitHub.", []
-
-    files = [f for f in os.listdir(folder_path) if f.lower().endswith('.pdf')]
-    
-    if not files:
-        return "AVISO: Pasta 'legislacao' vazia.", []
-
-    for filename in files:
-        try:
-            path = os.path.join(folder_path, filename)
-            reader = PdfReader(path)
-            content = ""
-            for page in reader.pages:
-                content += page.extract_text() + "\n"
-            
-            legal_text += f"\n\n=== LEGISLAÇÃO OFICIAL: {filename} ===\n{content}"
-            file_list.append(filename)
-        except Exception as e:
-            legal_text += f"\n[Erro ao ler lei {filename}: {str(e)}]\n"
-            
-    return legal_text, file_list
-
-# Carrega a legislação
-legal_knowledge_text, legal_files_list = load_legislation_knowledge_base()
-
-if legal_files_list:
-    st.sidebar.success(f"📚 {len(legal_files_list)} Leis carregadas da pasta 'legislacao'.")
-else:
-    st.sidebar.warning(f"⚠️ Nenhuma lei local encontrada. A usar apenas memória.")
-
 
 # --- PROMPT ---
 instructions = f"""
@@ -463,3 +484,4 @@ if st.button("🚀 Gerar Relatório (Auditado)", type="primary", use_container_w
                     st.write(result)
                 word_file = create_professional_word_doc(result, active_laws_links, local_laws_list=legal_files_list, project_type=project_type)
                 st.download_button("⬇️ Download Word", word_file.getvalue(), f"Parecer_EIA_Auditado.docx", on_click=reset_app, type="primary")
+
