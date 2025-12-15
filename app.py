@@ -100,7 +100,7 @@ with st.sidebar:
         api_key = CHAVE_FIXA
         st.success(f"🔑 Chave API Carregada")
     else:
-        api_key = st.text_input("Google API Key", type="password")
+        api_key = "AIzaSyBS4Pqjd0FijSve6joU0x10Iw9xG7bT-50"
     
     selected_model = None
     if api_key:
@@ -432,3 +432,4 @@ if st.button("🚀 Gerar Relatório (Auditado)", type="primary", use_container_w
                     st.write(result)
                 word_file = create_professional_word_doc(result, active_laws_links, legal_files_list, project_type)
                 st.download_button("⬇️ Download Word", word_file.getvalue(), f"Parecer_EIA_Auditado.docx", on_click=reset_app, type="primary")
+
