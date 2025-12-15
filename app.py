@@ -122,24 +122,31 @@ with st.sidebar:
             if models_list:
                 st.success(f"Chave válida!")
                 
-                # --- LÓGICA DE PRIORIDADE DO MODELO (1.5 Flash) ---
-                index_choice = 0
+                # --- LÓGICA DE SELEÇÃO DE MODELO (CORRIGIDA) ---
+                # Procura explicitamente pelo nome exato ou substring forte
+                preferred_model_index = 0
+                found_preferred = False
+
                 for i, m in enumerate(models_list):
-                    # Procura especificamente o 1.5 flash estável (evita experimentais se possível)
+                    # Prioridade Absoluta: gemini-1.5-flash (evitando versões experimentais se houver a estável)
                     if 'gemini-1.5-flash' in m and 'exp' not in m and '8b' not in m:
-                        index_choice = i
+                        preferred_model_index = i
+                        found_preferred = True
                         break
                 
-                # Fallback: Se não encontrar o exato, tenta qualquer 1.5 flash
-                if index_choice == 0:
-                     index_choice = next((i for i, m in enumerate(models_list) if '1.5' in m and 'flash' in m), 0)
-                
-                selected_model = st.selectbox("Modelo IA:", models_list, index=index_choice)
+                # Se não encontrou a versão "limpa", tenta qualquer variante 1.5-flash
+                if not found_preferred:
+                    for i, m in enumerate(models_list):
+                        if 'gemini-1.5-flash' in m:
+                            preferred_model_index = i
+                            break
+
+                selected_model = st.selectbox("Modelo IA:", models_list, index=preferred_model_index)
                 
                 if "1.5-flash" in selected_model:
-                    st.caption("✅ Modelo Económico Selecionado (Recomendado)")
+                    st.caption("✅ Modelo Económico (1.5 Flash) Selecionado.")
                 else:
-                    st.caption("⚠️ Atenção: Modelos Pro/Exp gastam mais cota.")
+                    st.caption(f"⚠️ Modelo atual: {selected_model}. Pode consumir mais cota.")
             else:
                 st.error("Sem modelos disponíveis.")
         except:
