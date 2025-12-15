@@ -9,8 +9,38 @@ from datetime import datetime
 import re
 import os
 
-# --- Configuração ---
+# --- Configuração OBRIGATÓRIA (Tem de ser a primeira linha de Streamlit) ---
 st.set_page_config(page_title="Análise", page_icon="⚖️", layout="wide")
+
+# ==========================================
+# --- 0. DIAGNÓSTICO (TEMPORÁRIO) ---
+# ==========================================
+st.title("⚖️ Análise")
+
+with st.expander("🕵️ DIAGNÓSTICO DE SISTEMA (Verificar Legislação)", expanded=True):
+    st.write(f"📂 **Pasta de Trabalho Atual:** `{os.getcwd()}`")
+    
+    # Verifica se a pasta legislacao existe
+    if os.path.exists("legislacao"):
+        st.success("✅ A pasta 'legislacao' FOI ENCONTRADA!")
+        files_inside = os.listdir("legislacao")
+        st.write(f"📜 **Ficheiros detetados dentro da pasta:**")
+        st.code(str(files_inside))
+        
+        if len(files_inside) == 0:
+            st.warning("⚠️ AVISO: A pasta existe, mas está VAZIA. O PDF não foi carregado corretamente.")
+        elif any(f.endswith('.pdf') for f in files_inside):
+            st.info("tudo parece estar correto. O sistema deve ler estes PDFs.")
+        else:
+            st.error("❌ A pasta existe, mas não tem ficheiros PDF (tem outros tipos?).")
+    else:
+        st.error("❌ ERRO CRÍTICO: A pasta 'legislacao' NÃO EXISTE neste diretório.")
+        st.write("Aqui está a lista do que existe na raiz do projeto (GitHub):")
+        st.code(str(os.listdir('.')))
+        st.caption("Dica: Se vê o 'app.py' na lista acima mas não vê 'legislacao', a pasta não foi enviada para o GitHub.")
+
+st.markdown("---")
+# ==========================================
 
 if 'uploader_key' not in st.session_state:
     st.session_state.uploader_key = 0
@@ -88,17 +118,16 @@ SPECIFIC_LAWS = {
 # --- 2. INTERFACE E LÓGICA ---
 # ==========================================
 
-st.title("⚖️ Análise")
 st.markdown("Análise Técnica e Legal com validação cruzada contra Legislação Oficial.")
 
 with st.sidebar:
     st.header("🔐 1. Configuração")
     
-    # === CORREÇÃO AQUI: INSERÇÃO MANUAL ===
+    # Campo para API Key manual (não guarda no código)
     api_key = st.text_input(
         "Google API Key", 
         type="password", 
-        help="Cole aqui a sua chave (começa por AIza...). Ela não será guardada no código."
+        help="Cole aqui a sua chave. Ela não será guardada no código."
     )
     
     selected_model = None
@@ -108,7 +137,6 @@ with st.sidebar:
             models_list = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
             if models_list:
                 st.success(f"Chave válida!")
-                # Tenta selecionar modelos com maior capacidade (1.5 ou flash)
                 index_flash = next((i for i, m in enumerate(models_list) if '1.5' in m or 'flash' in m), 0)
                 selected_model = st.selectbox("Modelo IA:", models_list, index=index_flash)
                 st.caption("ℹ️ Modelos 1.5 Flash são recomendados para ler várias leis.")
@@ -116,8 +144,6 @@ with st.sidebar:
                 st.error("Chave válida mas sem modelos.")
         except:
             st.error("Chave inválida.")
-    else:
-        st.info("👆 Insira a sua API Key para começar.")
 
     st.divider()
     
@@ -148,13 +174,14 @@ def load_legislation_knowledge_base(folder_path="legislacao"):
     file_list = []
     
     if not os.path.exists(folder_path):
-        os.makedirs(folder_path) 
-        return "AVISO: Pasta 'legislacao' criada.", []
+        # Não criamos a pasta aqui porque no Cloud não temos permissão de escrita persistente
+        # A pasta tem de vir do GitHub
+        return "AVISO: Pasta 'legislacao' não detetada. Verifique o GitHub.", []
 
     files = [f for f in os.listdir(folder_path) if f.lower().endswith('.pdf')]
     
     if not files:
-        return "AVISO: Pasta vazia.", []
+        return "AVISO: Pasta 'legislacao' vazia.", []
 
     for filename in files:
         try:
