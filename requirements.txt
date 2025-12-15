@@ -3,4 +3,5 @@ pypdf
 python-docx
 google-generativeai>=0.7.2
 watchdog
+cryptography
 
