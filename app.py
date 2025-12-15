@@ -122,31 +122,35 @@ with st.sidebar:
             if models_list:
                 st.success(f"Chave válida!")
                 
-                # --- LÓGICA DE SELEÇÃO DE MODELO (CORRIGIDA) ---
-                # Procura explicitamente pelo nome exato ou substring forte
-                preferred_model_index = 0
-                found_preferred = False
+                # --- LÓGICA DE PRIORIDADE 2.0 FLASH (CORRIGIDA) ---
+                index_choice = 0
+                found = False
 
+                # Prioridade 1: gemini-2.0-flash (Estável e Rápido)
                 for i, m in enumerate(models_list):
-                    # Prioridade Absoluta: gemini-1.5-flash (evitando versões experimentais se houver a estável)
-                    if 'gemini-1.5-flash' in m and 'exp' not in m and '8b' not in m:
-                        preferred_model_index = i
-                        found_preferred = True
+                    if 'gemini-2.0-flash' in m and 'exp' not in m and 'lite' not in m:
+                        index_choice = i
+                        found = True
                         break
                 
-                # Se não encontrou a versão "limpa", tenta qualquer variante 1.5-flash
-                if not found_preferred:
+                # Prioridade 2: gemini-2.0-flash-lite (Muito económico)
+                if not found:
                     for i, m in enumerate(models_list):
-                        if 'gemini-1.5-flash' in m:
-                            preferred_model_index = i
+                        if 'gemini-2.0-flash-lite' in m:
+                            index_choice = i
+                            found = True
                             break
-
-                selected_model = st.selectbox("Modelo IA:", models_list, index=preferred_model_index)
                 
-                if "1.5-flash" in selected_model:
-                    st.caption("✅ Modelo Económico (1.5 Flash) Selecionado.")
+                # Fallback: Qualquer coisa que diga "flash"
+                if not found:
+                    index_choice = next((i for i, m in enumerate(models_list) if 'flash' in m), 0)
+
+                selected_model = st.selectbox("Modelo IA:", models_list, index=index_choice)
+                
+                if "2.0-flash" in selected_model or "1.5-flash" in selected_model:
+                    st.caption("✅ Modelo Flash Selecionado (Recomendado para grandes documentos).")
                 else:
-                    st.caption(f"⚠️ Modelo atual: {selected_model}. Pode consumir mais cota.")
+                    st.caption(f"⚠️ Atenção: Modelos Pro/Exp podem ser mais lentos ou limitados.")
             else:
                 st.error("Sem modelos disponíveis.")
         except:
