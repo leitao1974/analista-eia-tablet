@@ -20,7 +20,7 @@ def reset_app():
     st.session_state.uploader_key += 1
 
 # ==========================================
-# --- 1. FUNÇÃO DE LEITURA ---
+# --- 1. LEITURA DE FICHEIROS ---
 # ==========================================
 
 def load_legislation_knowledge_base(folder_path="legislacao"):
@@ -72,7 +72,7 @@ with st.expander("🕵️ STATUS (Legislação)", expanded=False):
         st.error("❌ Pasta 'legislacao' não encontrada.")
 
 # ==========================================
-# --- 2. CONFIGURAÇÃO ---
+# --- 2. CONFIGURAÇÃO (MODELO 2.5 LITE) ---
 # ==========================================
 
 COMMON_LAWS = {
@@ -99,31 +99,30 @@ with st.sidebar:
             models_list = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
             
             if models_list:
-                # --- LÓGICA DE FORÇA BRUTA PARA 1.5 FLASH ---
-                # O 2.0 está a dar erro de cota (limit: 0). Voltamos ao 1.5.
+                # --- NOVA LÓGICA: CAÇA AO 'LITE' ---
                 index_choice = 0
                 found = False
 
+                # 1. Prioridade Máxima: Lite (Melhor para Cota Gratuita)
                 for i, m in enumerate(models_list):
-                    # Procura "gemini-1.5-flash" e rejeita experimentais/8b
-                    if 'gemini-1.5-flash' in m and 'exp' not in m and '8b' not in m:
+                    if 'lite' in m and 'flash' in m:
                         index_choice = i
                         found = True
                         break
                 
-                # Se não encontrar o limpo, tenta qualquer variante 1.5
+                # 2. Se não houver Lite, tenta o Flash 2.5 normal (mas evita imagens/robotics)
                 if not found:
                     for i, m in enumerate(models_list):
-                        if '1.5' in m and 'flash' in m:
+                        if 'flash' in m and '2.5' in m and 'image' not in m:
                             index_choice = i
                             break
 
                 selected_model = st.selectbox("Modelo IA:", models_list, index=index_choice)
                 
-                if "1.5-flash" in selected_model:
-                    st.caption("✅ Modelo 1.5 Flash (Mais Estável na Cota Gratuita)")
-                elif "2.0" in selected_model:
-                    st.caption("⚠️ O Modelo 2.0 pode falhar na cota gratuita.")
+                if "lite" in selected_model:
+                    st.caption("✅ Modelo 'Lite' Selecionado (Ótimo para evitar bloqueios!)")
+                else:
+                    st.caption("⚠️ Atenção: Modelos não-Lite podem atingir o limite mais depressa.")
             else:
                 st.error("Sem modelos.")
         except:
@@ -182,7 +181,7 @@ def extract_text(files):
 
 def analyze_ai(p_text, l_text, prompt, key, model):
     genai.configure(api_key=key)
-    # Tenta usar configurações de segurança para evitar falsos bloqueios
+    # Configurações de segurança no mínimo para evitar falsos positivos em textos técnicos
     safety_settings = [
         {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
         {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
@@ -190,8 +189,8 @@ def analyze_ai(p_text, l_text, prompt, key, model):
         {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"},
     ]
     m = genai.GenerativeModel(model)
-    # Reduzimos um pouco o input se for gigante
-    final = f"{prompt}\n\n### LEIS ###\n{l_text[:800000]}\n\n### EIA ###\n{p_text[:400000]}"
+    # Limita input para prevenir erros 429 violentos
+    final = f"{prompt}\n\n### LEIS ###\n{l_text[:900000]}\n\n### EIA ###\n{p_text[:500000]}"
     return m.generate_content(final, safety_settings=safety_settings).text
 
 def create_doc(txt, p_type):
@@ -207,17 +206,17 @@ if st.button("🚀 Gerar Relatório", type="primary"):
         st.error("Falta API Key ou EIA.")
     else:
         with st.spinner("A processar (pode demorar 60s)..."):
-            # Pequeno delay para garantir que não bate no rate limit inicial
-            time.sleep(2)
+            time.sleep(1) # Pausa estratégica
             eia_txt = extract_text(uploaded_files)
             res = analyze_ai(eia_txt, legal_knowledge_text, instructions, api_key, selected_model)
             
             if "quota" in res.lower() or "429" in res:
-                st.error("🚨 Erro de Cota: O volume de texto é demasiado grande para o plano gratuito neste momento.")
-                st.warning("Sugestão: Remova temporariamente o PDF do Simplex ou do EIA e tente de novo.")
+                st.error("🚨 Erro de Cota Gratuita.")
+                st.warning("O modelo 'Lite' também encheu. Solução final: Remova 1 ou 2 PDFs da legislação e tente de novo.")
                 st.code(res)
             else:
                 st.success("Feito!")
                 st.write(res)
                 docx = create_doc(res, project_type)
                 st.download_button("Word", docx, "parecer.docx")
+
