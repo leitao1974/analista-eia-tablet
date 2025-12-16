@@ -4,14 +4,14 @@ from docx import Document
 from docx.shared import Pt, RGBColor
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 import google.generativeai as genai
-from google.api_core.exceptions import ResourceExhausted # <--- Importante para apanhar o erro
+from google.api_core.exceptions import ResourceExhausted
 import io
 from datetime import datetime
 import re
 import os
 import time
 
-# --- Configuração OBRIGATÓRIA (Primeira linha) ---
+# --- Configuração OBRIGATÓRIA ---
 st.set_page_config(page_title="Análise EIA", page_icon="⚖️", layout="wide")
 
 if 'uploader_key' not in st.session_state:
@@ -25,7 +25,6 @@ def reset_app():
 # ==========================================
 
 def load_legislation_knowledge_base(folder_path="legislacao"):
-    """Lê os PDFs da pasta legislacao e prepara o 'cérebro' jurídico."""
     legal_text = ""
     file_list = []
     debug_log = [] 
@@ -49,7 +48,6 @@ def load_legislation_knowledge_base(folder_path="legislacao"):
             for page in reader.pages:
                 content += page.extract_text() + "\n"
             
-            # Adiciona cabeçalho claro para a IA saber de que lei se trata
             legal_text += f"\n\n=== LEGISLAÇÃO OFICIAL: {filename} ===\n{content}"
             file_list.append(filename)
             debug_log.append(f"✅ '{filename}' ({len(reader.pages)} págs).")
@@ -58,45 +56,82 @@ def load_legislation_knowledge_base(folder_path="legislacao"):
             
     return legal_text, file_list, debug_log
 
-# Carrega a legislação ao iniciar a App
 legal_knowledge_text, legal_files_list, load_logs = load_legislation_knowledge_base()
 
 # ==========================================
-# --- 0. STATUS E DIAGNÓSTICO ---
+# --- 0. STATUS ---
 # ==========================================
 st.title("⚖️ Análise Técnica e Legal (RAG)")
 
-with st.expander("🕵️ STATUS DO SISTEMA (Legislação Carregada)", expanded=False):
+with st.expander("🕵️ STATUS DO SISTEMA (Legislação)", expanded=False):
     if os.path.exists("legislacao"):
-        st.success(f"📂 Pasta 'legislacao' detetada.")
+        st.success(f"📂 Pasta 'legislacao' OK.")
         for log in load_logs:
             if "✅" in log: st.success(log)
             elif "❌" in log: st.error(log)
             else: st.info(log)
     else:
-        st.error("❌ A pasta 'legislacao' não foi encontrada no repositório.")
+        st.error("❌ Pasta 'legislacao' não encontrada.")
 
 # ==========================================
-# --- 2. CONFIGURAÇÃO (MODELOS & SETOR) ---
+# --- 2. CONFIGURAÇÃO (TODAS AS TIPOLOGIAS) ---
 # ==========================================
 
 COMMON_LAWS = {
     "RJAIA (DL 151-B/2013)": "https://diariodarepublica.pt/dr/legislacao-consolidada/decreto-lei/2013-116043164",
-    "LUA (DL 75/2015)": "https://diariodarepublica.pt/dr/legislacao-consolidada/decreto-lei/2015-106562356",
-    "Simplex (DL 11/2023)": "https://diariodarepublica.pt/dr/detalhe/decreto-lei/11-2023-207212480",
-    "Lei da Água": "https://diariodarepublica.pt/dr/legislacao-consolidada/lei/2005-34563267"
+    "Simplex Ambiental (DL 11/2023)": "https://diariodarepublica.pt/dr/detalhe/decreto-lei/11-2023-207212480",
+    "LUA (Licenciamento Único - DL 75/2015)": "https://diariodarepublica.pt/dr/legislacao-consolidada/decreto-lei/2015-106562356",
+    "Regulamento Geral do Ruído (DL 9/2007)": "https://diariodarepublica.pt/dr/legislacao-consolidada/decreto-lei/2007-34526556",
+    "Lei da Água (Lei 58/2005)": "https://diariodarepublica.pt/dr/legislacao-consolidada/lei/2005-34563267"
 }
 
+# --- LISTA COMPLETA DE TIPOLOGIAS RESTAURADA ---
 SPECIFIC_LAWS = {
-    "1. Agricultura/Silvicultura": {"NREAP": "https://diariodarepublica.pt/dr/legislacao-consolidada/decreto-lei/2013-34789570"},
-    "2. Indústria Extrativa": {"Minas/Pedreiras": "https://diariodarepublica.pt/dr/legislacao-consolidada/decreto-lei/2001-34449875"},
-    "3. Energia": {"Emissões": "https://diariodarepublica.pt/dr/legislacao-consolidada/decreto-lei/2013-34789569"},
-    "Outra Tipologia": {"SIR": "https://diariodarepublica.pt/dr/legislacao-consolidada/decreto-lei/2012-34658746"}
+    "1. Agricultura, Silvicultura e Aquicultura": {
+        "NREAP (Pecuária - DL 81/2013)": "https://diariodarepublica.pt/dr/legislacao-consolidada/decreto-lei/2013-34789570",
+        "Florestas (DL 16/2009)": "https://diariodarepublica.pt/dr/legislacao-consolidada/decreto-lei/2009-34488356"
+    },
+    "2. Indústria Extrativa (Minas e Pedreiras)": {
+        "Massas Minerais (DL 270/2001)": "https://diariodarepublica.pt/dr/legislacao-consolidada/decreto-lei/2001-34449875",
+        "Resíduos de Extração (DL 10/2010)": "https://diariodarepublica.pt/dr/legislacao-consolidada/decreto-lei/2010-34658745",
+        "Revelação e Aproveitamento (Lei 54/2015)": "https://diariodarepublica.pt/dr/legislacao-consolidada/lei/2015-106560456"
+    },
+    "3. Indústria Energética": {
+        "Bases do Sistema Elétrico (DL 15/2022)": "https://diariodarepublica.pt/dr/legislacao-consolidada/decreto-lei/2022-177343687",
+        "Emissões Industriais (DL 127/2013)": "https://diariodarepublica.pt/dr/legislacao-consolidada/decreto-lei/2013-34789569"
+    },
+    "4. Produção e Transformação de Metais": {
+        "SIR (Indústria Responsável - DL 169/2012)": "https://diariodarepublica.pt/dr/legislacao-consolidada/decreto-lei/2012-34658746",
+        "Emissões Industriais (DL 127/2013)": "https://diariodarepublica.pt/dr/legislacao-consolidada/decreto-lei/2013-34789569"
+    },
+    "5. Indústria Mineral e Química": {
+        "Seveso III (Acidentes Graves - DL 150/2015)": "https://diariodarepublica.pt/dr/legislacao-consolidada/decreto-lei/2015-106558967",
+        "Emissões (DL 127/2013)": "https://diariodarepublica.pt/dr/legislacao-consolidada/decreto-lei/2013-34789569"
+    },
+    "6. Infraestruturas (Rodovias, Ferrovias, Aeroportos)": {
+        "Estatuto das Estradas (Lei 34/2015)": "https://diariodarepublica.pt/dr/legislacao-consolidada/lei/2015-34585678",
+        "Servidões Aeronáuticas (DL 48/2022)": "https://diariodarepublica.pt/dr/detalhe/decreto-lei/48-2022-185799345"
+    },
+    "7. Engenharia Hidráulica (Barragens, Portos)": {
+        "Segurança de Barragens (DL 21/2018)": "https://diariodarepublica.pt/dr/legislacao-consolidada/decreto-lei/2018-114833256",
+        "Títulos de Utilização (DL 226-A/2007)": "https://diariodarepublica.pt/dr/legislacao-consolidada/decreto-lei/2007-34526558"
+    },
+    "8. Tratamento de Resíduos e Águas": {
+        "RGGR (Gestão Resíduos - DL 102-D/2020)": "https://diariodarepublica.pt/dr/legislacao-consolidada/decreto-lei/2020-150917243",
+        "Águas Residuais Urbanas (DL 152/97)": "https://diariodarepublica.pt/dr/legislacao-consolidada/decreto-lei/1997-34512345"
+    },
+    "9. Projetos Urbanos e Turísticos": {
+        "RJUE (Urbanização - DL 555/99)": "https://diariodarepublica.pt/dr/legislacao-consolidada/decreto-lei/1999-34563452",
+        "RJET (Empreendimentos Turísticos - DL 39/2008)": "https://diariodarepublica.pt/dr/legislacao-consolidada/decreto-lei/2008-34460567"
+    },
+    "Outra Tipologia": {
+        "SIR (Sistema Indústria Responsável - DL 169/2012)": "https://diariodarepublica.pt/dr/legislacao-consolidada/decreto-lei/2012-34658746"
+    }
 }
 
 with st.sidebar:
     st.header("🔐 Configuração")
-    api_key = st.text_input("Google API Key", type="password", help="Insira a chave (começa por AIza...).")
+    api_key = st.text_input("Google API Key", type="password")
     
     selected_model = None
     if api_key:
@@ -107,18 +142,16 @@ with st.sidebar:
             if models_list:
                 st.success(f"Chave válida!")
                 
-                # --- LÓGICA DE SELEÇÃO INTELIGENTE (Prioridade: Lite -> 1.5 -> Flash) ---
+                # --- SELEÇÃO DE MODELO (Prioridade: Lite -> 1.5 -> Flash) ---
                 index_choice = 0
                 found = False
 
-                # 1. Procura modelos "Lite" (Melhores para evitar erros de cota)
                 for i, m in enumerate(models_list):
                     if 'lite' in m and 'flash' in m:
                         index_choice = i
                         found = True
                         break
                 
-                # 2. Se não houver Lite, procura o clássico "1.5-flash" (Muito estável)
                 if not found:
                     for i, m in enumerate(models_list):
                         if 'gemini-1.5-flash' in m and 'exp' not in m:
@@ -126,20 +159,17 @@ with st.sidebar:
                             found = True
                             break
                 
-                # 3. Se falhar tudo, agarra o primeiro que tiver "flash"
                 if not found:
                     index_choice = next((i for i, m in enumerate(models_list) if 'flash' in m), 0)
 
                 selected_model = st.selectbox("Modelo IA:", models_list, index=index_choice)
                 
                 if "lite" in selected_model:
-                    st.caption("✅ Modelo 'Lite' selecionado (Otimizado para Cota Gratuita).")
+                    st.caption("✅ Modelo 'Lite' (Recomendado).")
                 elif "1.5-flash" in selected_model:
-                    st.caption("✅ Modelo 1.5 Flash selecionado (Alta Estabilidade).")
-                else:
-                    st.caption(f"ℹ️ Modelo: {selected_model}")
+                    st.caption("✅ Modelo 1.5 Flash (Estável).")
             else:
-                st.error("Chave válida mas sem modelos disponíveis.")
+                st.error("Sem modelos disponíveis.")
         except:
             st.error("Chave inválida.")
 
@@ -151,25 +181,25 @@ with st.sidebar:
         active_laws_links.update(SPECIFIC_LAWS[project_type])
     
     if legal_files_list:
-        st.success(f"📚 {len(legal_files_list)} diplomas carregados na memória.")
+        st.success(f"📚 {len(legal_files_list)} diplomas carregados.")
     else:
-        st.warning(f"⚠️ Nenhuma lei local. A usar apenas conhecimento geral.")
+        st.warning(f"⚠️ Nenhuma lei local.")
 
-uploaded_files = st.file_uploader("Carregue o EIA (PDFs)", type=['pdf'], accept_multiple_files=True, key=f"uploader_{st.session_state.uploader_key}")
+uploaded_files = st.file_uploader("Carregue o EIA/RNT", type=['pdf'], accept_multiple_files=True, key=f"uploader_{st.session_state.uploader_key}")
 
-# --- PROMPT (INSTRUÇÕES PARA A IA) ---
+# --- PROMPT ---
 instructions = f"""
 Atua como Perito Sénior em Engenharia do Ambiente e Jurista.
 Realiza uma AUDITORIA DE CONFORMIDADE RIGOROSA ao EIA de um projeto do setor: {project_type.upper()}.
 
 Vais receber dois blocos de informação:
-1. "CONHECIMENTO JURÍDICO (LEGISLAÇÃO OFICIAL)": O texto das leis que o utilizador carregou.
+1. "CONHECIMENTO JURÍDICO (LEGISLAÇÃO OFICIAL)": O texto das leis carregadas.
 2. "DADOS DO PROJETO (EIA)": O texto do proponente.
 
 A tua missão é CRUCIFERAR a informação. 
-- Verifica se o projeto cumpre as regras do "Simplex Ambiental" (DL 11/2023) se este estiver presente nas leis.
+- Verifica se o projeto cumpre as regras do "Simplex Ambiental" (DL 11/2023).
 - Verifica validades de licenças, prazos e isenções.
-- Se o EIA cita um valor limite, verifica se esse valor existe no "CONHECIMENTO JURÍDICO".
+- Se o EIA cita um valor limite, valida-o contra o "CONHECIMENTO JURÍDICO".
 
 REGRAS DE FORMATAÇÃO:
 1. "Sentence case" apenas.
@@ -190,7 +220,7 @@ Tom: Auditoria Forense, Formal e Técnico.
 """
 
 # ==========================================
-# --- 3. PROCESSAMENTO E IA (COM PROTEÇÃO DE ERRO) ---
+# --- 3. PROCESSAMENTO E IA ---
 # ==========================================
 
 def extract_text(files):
@@ -207,7 +237,6 @@ def analyze_ai(p_text, l_text, prompt, key, model):
     try:
         genai.configure(api_key=key)
         
-        # Filtros de segurança no mínimo para não bloquear termos técnicos ambientais
         safety_settings = [
             {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
             {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
@@ -217,21 +246,23 @@ def analyze_ai(p_text, l_text, prompt, key, model):
         
         m = genai.GenerativeModel(model)
         
-        # Montagem do Prompt Final
-        # Limitamos ligeiramente os caracteres para tentar evitar o erro de cota
-        final_prompt = f"{prompt}\n\n### BLOCO 1: LEGISLAÇÃO OFICIAL (VERDADE ABSOLUTA) ###\n{l_text[:900000]}\n\n### BLOCO 2: EIA DO PROPONENTE ###\n{p_text[:500000]}"
+        # --- LIMITES PARA CONTA GRATUITA ---
+        # Mantemos um limite de segurança, mas suficiente para o RNT
+        limit_lei = 300000 
+        limit_eia = 300000
+        
+        final_prompt = f"{prompt}\n\n### LEGISLAÇÃO OFICIAL ###\n{l_text[:limit_lei]}\n\n### EIA DO PROPONENTE ###\n{p_text[:limit_eia]}"
         
         response = m.generate_content(final_prompt, safety_settings=safety_settings)
         return response.text
 
     except ResourceExhausted:
-        return "⚠️ ERRO DE CAPACIDADE (429): O volume total de texto (Lei + EIA) excede o permitido pelo plano gratuito neste momento.\n\nSOLUÇÃO SUGERIDA:\n1. Vá ao GitHub e apague temporariamente os PDFs maiores da pasta 'legislacao', mantendo apenas o essencial (ex: Simplex e RJAIA).\n2. Reinicie a App e tente novamente.\n3. Ou aguarde alguns minutos e tente de novo."
+        return "⚠️ ERRO DE CAPACIDADE (429): O volume de texto excede o plano gratuito. Tente usar apenas o RNT ou reduza a legislação carregada."
     
     except Exception as e:
-        return f"❌ Erro Técnico Inesperado: {str(e)}"
+        return f"❌ Erro Técnico: {str(e)}"
 
-# --- LÓGICA DE WORD (LIMPEZA) ---
-
+# --- WORD CLEANING ---
 def clean_ai_formatting(text):
     text = re.sub(r'[*_#]', '', text)
     if len(text) > 10:
@@ -247,14 +278,10 @@ def parse_markdown_to_docx(doc, markdown_text):
         if not line: continue
         
         clean_upper = re.sub(r'[*#_]', '', line).strip().upper()
-        
-        # Deteta Cabeçalhos
         if line.startswith('#'):
             clean_title = clean_ai_formatting(line.replace('#', ''))
             level = 1 if line.startswith('## ') else 2
             doc.add_heading(clean_title, level=level)
-            
-            # Lógica de limpeza para capítulos finais
             if any(x in clean_upper for x in ["ANÁLISE", "FUNDAMENTAÇÃO", "CITAÇÕES", "CONCLUS"]) or \
                clean_upper.startswith(("5.", "6.", "7.", "8.")):
                 cleaning_mode = True
@@ -263,56 +290,41 @@ def parse_markdown_to_docx(doc, markdown_text):
             continue
 
         p = doc.add_paragraph()
-        clean_txt = clean_ai_formatting(line) if cleaning_mode else line.replace('**', '') # Simplificado
-        
+        clean_txt = clean_ai_formatting(line) if cleaning_mode else line.replace('**', '')
         if line.startswith(('- ', '* ')):
             p.style = 'List Bullet'
             clean_txt = clean_txt[2:]
-        
         p.add_run(clean_txt)
 
 def create_doc(content, links, files, p_type):
     doc = Document()
-    style = doc.styles['Normal']
-    style.font.name = 'Calibri'
-    style.font.size = Pt(11)
-    style.paragraph_format.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
-    
+    doc.styles['Normal'].font.name = 'Calibri'
     doc.add_heading('PARECER TÉCNICO EIA', 0).alignment = WD_ALIGN_PARAGRAPH.CENTER
     doc.add_paragraph(f'Setor: {p_type} | Data: {datetime.now().strftime("%d/%m/%Y")}').alignment = WD_ALIGN_PARAGRAPH.CENTER
     doc.add_paragraph('---')
-    
     parse_markdown_to_docx(doc, content)
-    
     doc.add_page_break()
     doc.add_heading('ANEXO: Fontes', 1)
     if files:
-        doc.add_paragraph("Legislação Carregada (RAG):", style='Normal').bold = True
-        for f in files: doc.add_paragraph(f"Ficheiro: {f}", style='List Bullet')
-        
+        doc.add_paragraph("Legislação (RAG):", style='Normal').bold = True
+        for f in files: doc.add_paragraph(f"{f}", style='List Bullet')
     bio = io.BytesIO()
     doc.save(bio)
     return bio
 
-# --- BOTÃO E EXECUÇÃO ---
+# --- EXECUÇÃO ---
 st.markdown("---")
-if st.button("🚀 Gerar Relatório (Auditado)", type="primary", use_container_width=True):
-    if not api_key: st.error("⚠️ Insira a API Key.")
-    elif not uploaded_files: st.warning("⚠️ Carregue o EIA.")
+if st.button("🚀 Gerar Relatório", type="primary", use_container_width=True):
+    if not api_key: st.error("⚠️ Falta API Key.")
+    elif not uploaded_files: st.warning("⚠️ Falta EIA.")
     else:
-        with st.spinner("⏳ A ler legislação e a auditar o EIA... (Aguarde até 2 min)"):
-            # Pausa para evitar rate-limit imediato
+        with st.spinner("A auditar..."):
             time.sleep(1)
-            
             eia_text = extract_text(uploaded_files)
             result = analyze_ai(eia_text, legal_knowledge_text, instructions, api_key, selected_model)
-            
-            # Verifica se a resposta é um erro nosso
-            if "⚠️ ERRO DE CAPACIDADE" in result or "❌" in result:
-                st.error(result)
+            if "⚠️" in result or "❌" in result: st.error(result)
             else:
-                st.success("✅ Auditoria Concluída!")
+                st.success("✅ Concluído!")
                 with st.expander("Ver Relatório"): st.write(result)
                 docx = create_doc(result, active_laws_links, legal_files_list, project_type)
-                st.download_button("⬇️ Download Word", docx.getvalue(), "Parecer_Auditado.docx", type="primary", on_click=reset_app)
-
+                st.download_button("⬇️ Download Word", docx.getvalue(), "Parecer.docx", type="primary", on_click=reset_app)
