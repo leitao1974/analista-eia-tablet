@@ -331,5 +331,4 @@ if st.button("🚀 Gerar Relatório", type="primary", use_container_width=True):
                 st.success("✅ Concluído!")
                 with st.expander("Ver Relatório"): st.write(result)
                 docx = create_doc(result, active_laws_links, legal_files_list, project_type)
-                st.download_button("⬇️ Download Word", docx.getvalue(), "Parecer.docx", type="primary", on_click=reset_app)"Parecer_Auditado.docx")
-
+                st.download_button("⬇️ Download Word", docx.getvalue(), "Parecer_Auditado.docx", type="primary", on_click=reset_app)
