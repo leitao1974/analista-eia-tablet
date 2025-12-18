@@ -1,30 +1,24 @@
 import streamlit as st
 from pypdf import PdfReader
-from docx import Document
-from docx.shared import Pt
-from docx.enum.text import WD_ALIGN_PARAGRAPH
 import google.generativeai as genai
-from google.api_core.exceptions import ResourceExhausted
-import io
-from datetime import datetime
-import re
+from google.api_core.exceptions import ResourceExhausted, NotFound
 import os
 import time
 
 # --- CONFIGURAÇÃO ---
-st.set_page_config(page_title="Diagnóstico EIA", page_icon="🔧", layout="wide")
+st.set_page_config(page_title="Diagnóstico Final", page_icon="🔧", layout="wide")
 
-# Função para limpar memória à força
+# Função para limpar memória
 def clear_cache():
     st.cache_data.clear()
     st.cache_resource.clear()
     if 'uploader_key' not in st.session_state: st.session_state.uploader_key = 0
     st.session_state.uploader_key += 1
-    st.success("Memória limpa com sucesso!")
+    st.success("✅ Memória do servidor limpa!")
 
 with st.sidebar:
     st.header("🔧 Diagnóstico")
-    if st.button("🧹 1. CLICAR AQUI PRIMEIRO (Limpar Memória)", type="primary"):
+    if st.button("🧹 1. LIMPAR MEMÓRIA (Obrigatório)", type="primary"):
         clear_cache()
     
     api_key = st.text_input("Google API Key", type="password")
@@ -34,26 +28,22 @@ with st.sidebar:
 def load_laws():
     folder = "legislacao"
     text = ""
-    count = 0
-    files = []
-    
     if os.path.exists(folder):
         for f in os.listdir(folder):
             if f.endswith('.pdf'):
                 try:
                     reader = PdfReader(os.path.join(folder, f))
-                    t = ""
-                    for p in reader.pages: t += p.extract_text() or ""
-                    text += f"\n=== LEI: {f} ===\n{t}"
-                    files.append(f)
+                    for p in reader.pages: text += p.extract_text() or ""
                 except: pass
-    return text, files
+    return text
 
-legal_text, legal_files = load_laws()
+legal_text = load_laws()
 
 # --- UPLOAD EIA ---
-st.title("🧪 Teste de Capacidade (RNT)")
-uploaded = st.file_uploader("Carregue o RNT (25 págs)", type=['pdf'], key=f"uploader_{st.session_state.get('uploader_key', 0)}")
+st.title("🧪 Teste de Ligação (Auto-Modelo)")
+st.info("Este teste vai detetar automaticamente qual o modelo que a sua chave permite usar.")
+
+uploaded = st.file_uploader("Carregue o RNT (PDF pequeno)", type=['pdf'], key=f"uploader_{st.session_state.get('uploader_key', 0)}")
 
 eia_text = ""
 if uploaded:
@@ -62,38 +52,67 @@ if uploaded:
         for p in reader.pages: eia_text += p.extract_text() or ""
     except: pass
 
-# --- O VERDADEIRO DIAGNÓSTICO ---
+# --- MÉTRICAS ---
 len_lei = len(legal_text)
 len_eia = len(eia_text)
 total = len_lei + len_eia
 
 c1, c2, c3 = st.columns(3)
-c1.metric("Tamanho Legislação", f"{len_lei:,} caracteres")
-c2.metric("Tamanho EIA", f"{len_eia:,} caracteres")
-c3.metric("TOTAL A ENVIAR", f"{total:,} caracteres", delta="Limite Seguro: ~800.000")
+c1.metric("Legislação (Memória)", f"{len_lei:,} chars")
+c2.metric("EIA (Upload)", f"{len_eia:,} chars")
+c3.metric("TOTAL", f"{total:,} chars")
 
-# --- LÓGICA DE ENVIO ---
-def run_ai(k, prompt):
+# --- LÓGICA DE ENVIO INTELIGENTE ---
+def find_best_model(k):
     genai.configure(api_key=k)
-    # FORÇA O MODELO 1.5 FLASH (O mais leve de todos)
-    model = genai.GenerativeModel('gemini-1.5-flash') 
-    return model.generate_content(prompt).text
+    try:
+        all_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
+        
+        # Prioridade 1: Algum modelo "Lite" (são os melhores para cota)
+        best = next((m for m in all_models if 'lite' in m), None)
+        
+        # Prioridade 2: Algum modelo "Flash"
+        if not best: best = next((m for m in all_models if 'flash' in m), None)
+        
+        # Prioridade 3: O primeiro que aparecer
+        if not best and all_models: best = all_models[0]
+        
+        return best, all_models
+    except Exception as e:
+        return None, str(e)
 
 if st.button("🚀 Testar Envio", type="primary"):
-    if total > 900000:
-        st.error(f"❌ IMPOSSÍVEL ENVIAR: Tem {total} caracteres. O limite é cerca de 800.000. Limpe a pasta legislação.")
-    elif not api_key:
+    if not api_key:
         st.error("Falta API Key")
+    elif total > 800000:
+        st.error(f"❌ TOTAL MUITO ALTO ({total}). Limpe a pasta 'legislacao' no GitHub.")
     else:
-        try:
-            with st.spinner("A enviar..."):
-                prompt = f"Analisa este EIA com base na Lei:\n\nLEI:\n{legal_text[:100000]}\n\nEIA:\n{eia_text[:100000]}"
-                res = run_ai(api_key, prompt)
-                st.success("✅ SUCESSO! A API respondeu:")
-                st.write(res)
-        except ResourceExhausted:
-            st.error("🚨 ERRO 429: A sua chave está temporariamente bloqueada pela Google (Penalty Box).")
-            st.warning("Espere 5 a 10 minutos sem fazer nada e tente de novo.")
-        except Exception as e:
-            st.error(f"Erro: {e}")
+        # 1. Encontrar Modelo
+        model_name, debug_info = find_best_model(api_key)
+        
+        if not model_name:
+            st.error(f"Não foi possível listar modelos. Erro: {debug_info}")
+        else:
+            st.success(f"✅ Modelo detetado e selecionado: {model_name}")
+            
+            # 2. Tentar Enviar
+            try:
+                with st.spinner("A enviar..."):
+                    genai.configure(api_key=api_key)
+                    model = genai.GenerativeModel(model_name)
+                    
+                    # Prompt Curto para teste
+                    prompt = f"Resume este texto numa frase:\n\nCONTEXTO:\n{legal_text[:5000]}\n\nDADOS:\n{eia_text[:5000]}"
+                    
+                    res = model.generate_content(prompt).text
+                    st.balloons()
+                    st.success("✅ RESPOSTA RECEBIDA:")
+                    st.write(res)
+                    
+            except ResourceExhausted:
+                st.error("🚨 ERRO 429 (Cota): A chave continua bloqueada temporariamente. Aguarde 10 min.")
+            except NotFound:
+                st.error(f"🚨 ERRO 404: O modelo {model_name} afinal não funciona. Tente outra chave.")
+            except Exception as e:
+                st.error(f"Erro Genérico: {e}")
 
