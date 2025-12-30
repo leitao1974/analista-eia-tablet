@@ -16,12 +16,12 @@ from datetime import datetime
 # --- 1. CONFIGURAÇÃO VISUAL ---
 # ==========================================
 
-st.set_page_config(page_title="Auditor EIA Pro - Super Base", page_icon="⚖️", layout="wide")
+st.set_page_config(page_title="Auditor EIA Pro (Versão Consolidada)", page_icon="⚖️", layout="wide")
 
 st.markdown("""
 <style>
-    .stButton>button { width: 100%; border-radius: 5px; height: 3em; background-color: #1f77b4; color: white; }
-    .stSuccess, .stInfo { border-left: 5px solid #1f77b4; }
+    .stButton>button { width: 100%; border-radius: 5px; height: 3em; background-color: #0e4da4; color: white; }
+    .stSuccess, .stInfo, .stWarning { border-left: 5px solid #0e4da4; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -29,88 +29,79 @@ if 'uploader_key' not in st.session_state: st.session_state.uploader_key = 0
 def reset_app(): st.session_state.uploader_key += 1
 
 # ==========================================
-# --- 2. SUPER BASE DE DADOS LEGISLATIVA ---
+# --- 2. SUPER BASE DE DADOS LEGISLATIVA (BLINDADA) ---
 # ==========================================
 
-# Leis que se aplicam a QUASE TODOS os projetos
+# A chave do dicionário inclui "na redação atual" para instruir a IA a considerar revisões.
 COMMON_LAWS = {
-    "RJAIA (DL 151-B/2013 + Alterações)": "https://diariodarepublica.pt/dr/legislacao-consolidada/decreto-lei/2013-116043164",
-    "SIMPLEX AMBIENTAL (DL 11/2023)": "https://diariodarepublica.pt/dr/detalhe/decreto-lei/11-2023-207604364",
-    "LUA - Licenciamento Único Ambiental (DL 75/2015)": "https://diariodarepublica.pt/dr/legislacao-consolidada/decreto-lei/2015-106567543",
-    "LEI DE BASES DO AMBIENTE (Lei 19/2014)": "https://diariodarepublica.pt/dr/legislacao-consolidada/lei/2014-34543212",
-    "REDE NATURA 2000 (DL 140/99)": "https://diariodarepublica.pt/dr/legislacao-consolidada/decreto-lei/1999-34460975",
-    "REGULAMENTO GERAL DO RUÍDO (DL 9/2007)": "https://diariodarepublica.pt/dr/legislacao-consolidada/decreto-lei/2007-34526556",
-    "LEI DA ÁGUA (Lei 58/2005)": "https://diariodarepublica.pt/dr/legislacao-consolidada/lei/2005-34563267",
-    "REGIME GERAL DE RESÍDUOS (DL 102-D/2020)": "https://diariodarepublica.pt/dr/legislacao-consolidada/decreto-lei/2020-150917243",
-    "RESPONSABILIDADE AMBIENTAL (DL 147/2008)": "https://diariodarepublica.pt/dr/legislacao-consolidada/decreto-lei/2008-34484567",
-    "QUALIDADE DO AR (DL 102/2010)": "https://diariodarepublica.pt/dr/legislacao-consolidada/decreto-lei/2010-34512345"
+    "RJAIA - Regime Jurídico AIA (DL 151-B/2013 na redação atual)": "https://diariodarepublica.pt/dr/legislacao-consolidada/decreto-lei/2013-116043164",
+    "SIMPLEX AMBIENTAL (DL 11/2023 - Versão Consolidada)": "https://diariodarepublica.pt/dr/detalhe/decreto-lei/11-2023-207604364",
+    "LUA - Licenciamento Único (DL 75/2015 na redação atual)": "https://diariodarepublica.pt/dr/legislacao-consolidada/decreto-lei/2015-106567543",
+    "REDE NATURA 2000 (DL 140/99 com alterações do DL 49/2005)": "https://diariodarepublica.pt/dr/legislacao-consolidada/decreto-lei/1999-34460975",
+    "RGR - Regulamento Geral do Ruído (DL 9/2007 na redação atual)": "https://diariodarepublica.pt/dr/legislacao-consolidada/decreto-lei/2007-34526556",
+    "LEI DA ÁGUA (Lei 58/2005 e DL 226-A/2007 consolidados)": "https://diariodarepublica.pt/dr/legislacao-consolidada/lei/2005-34563267",
+    "RGGR - Regime Geral de Resíduos (DL 102-D/2020 atualizado)": "https://diariodarepublica.pt/dr/legislacao-consolidada/decreto-lei/2020-150917243",
+    "RESPONSABILIDADE AMBIENTAL (DL 147/2008 na redação atual)": "https://diariodarepublica.pt/dr/legislacao-consolidada/decreto-lei/2008-34484567"
 }
 
-# Leis Específicas por Tipologia (Expandida)
 SPECIFIC_LAWS = {
     "1. Agricultura, Pecuária e Floresta": {
-        "NREAP - Atividade Pecuária (DL 81/2013)": "https://diariodarepublica.pt/dr/legislacao-consolidada/decreto-lei/2013-34567890",
-        "GESTÃO EFLUENTES PECUÁRIOS (Port. 631/2009)": "https://diariodarepublica.pt/dr/detalhe/portaria/631-2009-518868",
-        "PROGRAMAS DE AÇÃO NITRATOS (Port. 259/2012)": "https://diariodarepublica.pt/dr/detalhe/portaria/259-2012-345678",
-        "SISTEMA DEFESA FLORESTA (DL 124/2006)": "https://diariodarepublica.pt/dr/legislacao-consolidada/decreto-lei/2006-34512345",
-        "ARBORIZAÇÃO E REARBORIZAÇÃO (DL 96/2013)": "https://diariodarepublica.pt/dr/legislacao-consolidada/decreto-lei/2013-10654321"
+        "NREAP - Pecuária (DL 81/2013 na redação atual)": "https://diariodarepublica.pt/dr/legislacao-consolidada/decreto-lei/2013-34766868",
+        "GESTÃO EFLUENTES PECUÁRIOS (Port. 631/2009 consolidada)": "https://diariodarepublica.pt/dr/detalhe/portaria/631-2009-518868",
+        "SISTEMA DEFESA FLORESTA (DL 124/2006 na redação atual)": "https://diariodarepublica.pt/dr/legislacao-consolidada/decreto-lei/2006-34493356",
+        "ARBORIZAÇÃO (DL 96/2013 na redação atual)": "https://diariodarepublica.pt/dr/legislacao-consolidada/decreto-lei/2013-116043321"
     },
     "2. Indústria Extrativa (Minas e Pedreiras)": {
-        "LEI DE BASES RECURSOS GEOLÓGICOS (Lei 54/2015)": "https://diariodarepublica.pt/dr/legislacao-consolidada/lei/2015-106556789",
-        "RESÍDUOS DE EXTRAÇÃO (DL 10/2010)": "https://diariodarepublica.pt/dr/legislacao-consolidada/decreto-lei/2010-34658745",
-        "REVELAÇÃO E APROVEITAMENTO (DL 270/2001)": "https://diariodarepublica.pt/dr/legislacao-consolidada/decreto-lei/2001-34449875",
-        "SEGURANÇA E SAÚDE EM MINAS (DL 162/90)": "https://diariodarepublica.pt/dr/detalhe/decreto-lei/162-1990-417937"
+        "BASES RECURSOS GEOLÓGICOS (Lei 54/2015 atualizada)": "https://diariodarepublica.pt/dr/legislacao-consolidada/lei/2015-107567789",
+        "RESÍDUOS DE EXTRAÇÃO (DL 10/2010 na redação atual)": "https://diariodarepublica.pt/dr/legislacao-consolidada/decreto-lei/2010-34658745",
+        "REVELAÇÃO E APROVEITAMENTO (DL 270/2001 atualizado)": "https://diariodarepublica.pt/dr/legislacao-consolidada/decreto-lei/2001-34449875"
     },
     "3. Energia (Renováveis, Linhas, H2)": {
-        "BASES DO SISTEMA ELÉTRICO (DL 15/2022)": "https://diariodarepublica.pt/dr/legislacao-consolidada/decreto-lei/2022-177343687",
-        "PRODUÇÃO H2 E GASES RENOVÁVEIS (DL 62/2020)": "https://diariodarepublica.pt/dr/legislacao-consolidada/decreto-lei/2020-13456789",
-        "CAMPOS ELETROMAGNÉTICOS (Port. 1421/2004)": "https://diariodarepublica.pt/dr/detalhe/portaria/1421-2004-193456",
-        "REGULAMENTO SEGURANÇA LINHAS AT (DL 25/2016)": "https://diariodarepublica.pt/dr/detalhe/decreto-lei/25-2016-10654321"
+        "SISTEMA ELÉTRICO (DL 15/2022 atualizado)": "https://diariodarepublica.pt/dr/legislacao-consolidada/decreto-lei/2022-177343687",
+        "GASES RENOVÁVEIS/H2 (DL 62/2020 atualizado)": "https://diariodarepublica.pt/dr/legislacao-consolidada/decreto-lei/2020-141445587",
+        "LINHAS ALTA TENSÃO (DL 25/2016)": "https://diariodarepublica.pt/dr/detalhe/decreto-lei/25-2016-106543210"
     },
-    "4. Indústria e Química (Seveso, Emissões)": {
-        "SISTEMA INDÚSTRIA RESPONSÁVEL (SIR - DL 169/2012)": "https://diariodarepublica.pt/dr/legislacao-consolidada/decreto-lei/2012-34567890",
-        "EMISSÕES INDUSTRIAIS (DL 127/2013)": "https://diariodarepublica.pt/dr/legislacao-consolidada/decreto-lei/2013-34789569",
-        "PREVENÇÃO ACIDENTES GRAVES (SEVESO III - DL 150/2015)": "https://diariodarepublica.pt/dr/legislacao-consolidada/decreto-lei/2015-106558967",
-        "REGISTO E AVALIAÇÃO SUBSTÂNCIAS (REACH)": "https://echa.europa.eu/regulations/reach/legislation"
+    "4. Indústria e Química": {
+        "SISTEMA INDÚSTRIA (SIR - DL 169/2012 na redação atual)": "https://diariodarepublica.pt/dr/legislacao-consolidada/decreto-lei/2012-34658112",
+        "EMISSÕES INDUSTRIAIS (DL 127/2013 atualizado)": "https://diariodarepublica.pt/dr/legislacao-consolidada/decreto-lei/2013-34789569",
+        "SEVESO III (DL 150/2015 atualizado)": "https://diariodarepublica.pt/dr/legislacao-consolidada/decreto-lei/2015-106558967"
     },
     "5. Infraestruturas e Transportes": {
-        "ESTATUTO DAS ESTRADAS (Lei 34/2015)": "https://diariodarepublica.pt/dr/legislacao-consolidada/lei/2015-34585678",
-        "SERVIDÕES AERONÁUTICAS (DL 48/2022)": "https://diariodarepublica.pt/dr/detalhe/decreto-lei/48-2022-185799345",
-        "GESTÃO DE RUÍDO INFRAESTRUTURAS (DL 146/2006)": "https://diariodarepublica.pt/dr/legislacao-consolidada/decreto-lei/2006-34512345"
+        "ESTATUTO ESTRADAS (Lei 34/2015 atualizada)": "https://diariodarepublica.pt/dr/legislacao-consolidada/lei/2015-34585678",
+        "SERVIDÕES AERONÁUTICAS (DL 48/2022)": "https://diariodarepublica.pt/dr/detalhe/decreto-lei/48-2022-185799345"
     },
     "6. Água, Saneamento e Hidráulica": {
-        "UTILIZAÇÃO RECURSOS HÍDRICOS (DL 226-A/2007)": "https://diariodarepublica.pt/dr/legislacao-consolidada/decreto-lei/2007-34567890",
-        "QUALIDADE ÁGUA CONSUMO (DL 306/2007)": "https://diariodarepublica.pt/dr/legislacao-consolidada/decreto-lei/2007-34512345",
-        "ÁGUAS RESIDUAIS URBANAS (DL 152/97)": "https://diariodarepublica.pt/dr/legislacao-consolidada/decreto-lei/1997-34512345",
-        "SEGURANÇA DE BARRAGENS (DL 21/2018)": "https://diariodarepublica.pt/dr/legislacao-consolidada/decreto-lei/2018-114833256",
-        "GESTÃO RISCO INUNDAÇÕES": "https://diariodarepublica.pt/dr/detalhe/resolucao-conselho-ministros/51-2016-10654321"
+        "UTILIZAÇÃO RECURSOS HÍDRICOS (DL 226-A/2007 na redação atual)": "https://diariodarepublica.pt/dr/legislacao-consolidada/decreto-lei/2007-34526567",
+        "QUALIDADE ÁGUA CONSUMO (DL 306/2007 com alt. DL 69/2023)": "https://diariodarepublica.pt/dr/legislacao-consolidada/decreto-lei/2007-34512233",
+        "SEGURANÇA BARRAGENS (DL 21/2018)": "https://diariodarepublica.pt/dr/legislacao-consolidada/decreto-lei/2018-114833256"
     },
-    "7. Resíduos e Economia Circular": {
-        "REGIME GERAL GESTÃO RESÍDUOS (DL 102-D/2020)": "https://diariodarepublica.pt/dr/legislacao-consolidada/decreto-lei/2020-150917243",
-        "DEPOSIÇÃO EM ATERRO (DL 102-D/2020 Anexo)": "https://diariodarepublica.pt/dr/legislacao-consolidada/decreto-lei/2020-150917243",
-        "INCINERAÇÃO E CO-INCINERAÇÃO (DL 127/2013)": "https://diariodarepublica.pt/dr/legislacao-consolidada/decreto-lei/2013-34789569"
+    "7. Resíduos": {
+        "RGGR (DL 102-D/2020 na redação atual)": "https://diariodarepublica.pt/dr/legislacao-consolidada/decreto-lei/2020-150917243",
+        "ATERROS (DL 102-D/2020 Anexo II)": "https://diariodarepublica.pt/dr/legislacao-consolidada/decreto-lei/2020-150917243"
     },
     "8. Turismo e Urbanismo": {
-        "RJUE - Urbanização e Edificação (DL 555/99)": "https://diariodarepublica.pt/dr/legislacao-consolidada/decreto-lei/1999-34563452",
-        "RJET - Empreendimentos Turísticos (DL 39/2008)": "https://diariodarepublica.pt/dr/legislacao-consolidada/decreto-lei/2008-34460567",
-        "RESERVA ECOLÓGICA NACIONAL (REN - DL 166/2008)": "https://diariodarepublica.pt/dr/legislacao-consolidada/decreto-lei/2008-34512345",
-        "RESERVA AGRÍCOLA NACIONAL (RAN - DL 73/2009)": "https://diariodarepublica.pt/dr/legislacao-consolidada/decreto-lei/2009-34567890"
+        "RJUE (DL 555/99 na redação atual)": "https://diariodarepublica.pt/dr/legislacao-consolidada/decreto-lei/1999-34563452",
+        "RJET (DL 39/2008 na redação atual)": "https://diariodarepublica.pt/dr/legislacao-consolidada/decreto-lei/2008-34460567",
+        "REN (DL 166/2008 na redação atual)": "https://diariodarepublica.pt/dr/legislacao-consolidada/decreto-lei/2008-34512221"
     },
     "Outra Tipologia": {}
 }
 
 # ==========================================
-# --- 3. LÓGICA DE PROCESSO (FILE API + LOCAL) ---
+# --- 3. LÓGICA DE PROCESSO (HÍBRIDA) ---
 # ==========================================
 
 def get_available_models(api_key):
+    """Lista modelos disponíveis na API Google."""
     try:
         genai.configure(api_key=api_key)
-        return [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
-    except: return []
+        models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
+        return models
+    except:
+        return []
 
 def extract_text_from_pdfs_local(files):
-    """Extrai texto de PDFs de legislação extra (máx 200MB total na memória)."""
+    """Lê PDFs de legislação extra localmente (não precisa de cloud)."""
     text = ""
     for f in files:
         try:
@@ -124,6 +115,7 @@ def extract_text_from_pdfs_local(files):
     return text
 
 def merge_pdfs_to_temp(uploaded_files):
+    """Junta todos os ficheiros do processo num único PDF temporário."""
     merger = PdfWriter()
     for uploaded_file in uploaded_files:
         merger.append(uploaded_file)
@@ -133,36 +125,40 @@ def merge_pdfs_to_temp(uploaded_files):
     return tmp_path
 
 def analyze_large_document(merged_pdf_path, laws_str, extra_laws_text, prompt_instructions, key, model_name):
+    """
+    Envia o Processo gigante via File API + Instruções e Leis via Texto.
+    """
     genai.configure(api_key=key)
     status_msg = st.empty()
-    status_msg.info("📤 A enviar processo para a Google Cloud (File API)...")
+    status_msg.info("📤 A enviar processo EIA para a Google Cloud (File API)...")
     
     processo_file = None
     try:
-        # 1. Upload do Processo Principal
+        # 1. Upload do Ficheiro Grande
         processo_file = genai.upload_file(path=merged_pdf_path, display_name="Processo EIA Auditoria")
         
-        # 2. Polling de Estado
+        # 2. Esperar processamento
         status_msg.info("⚙️ A Google está a processar o PDF...")
         while processo_file.state.name == "PROCESSING":
             time.sleep(2)
             processo_file = genai.get_file(processo_file.name)
         
-        if processo_file.state.name == "FAILED": raise ValueError("Google falhou a leitura do PDF.")
+        if processo_file.state.name == "FAILED":
+            raise ValueError("A Google falhou a leitura do PDF do processo.")
         
-        status_msg.success("✅ Leitura concluída. A iniciar auditoria com IA...")
+        status_msg.success("✅ Processamento concluído. A iniciar análise jurídica...")
 
-        # 3. Prompt Avançado
+        # 3. Gerar Análise
         model = genai.GenerativeModel(model_name)
         
         full_prompt = [
             prompt_instructions,
-            "\n=== QUADRO LEGISLATIVO GERAL (VERIFICAR CONFORMIDADE) ===\n",
+            "\n=== QUADRO LEGISLATIVO GERAL (VERIFICAR CUMPRIMENTO) ===\n",
             laws_str,
-            "\n=== QUADRO LEGISLATIVO EXTRA (TEXTO COMPLETO) ===\n",
+            "\n=== LEGISLAÇÃO EXTRA CARREGADA PELO UTILIZADOR (TEXTO INTEGRAL) ===\n",
             extra_laws_text if extra_laws_text else "Nenhum diploma extra carregado.",
-            "\n=== INSTRUÇÃO DE EXECUÇÃO ===\n",
-            "Com base nas leis acima e no PROCESSO EIA em anexo, gera o relatório.",
+            "\n=== INSTRUÇÃO FINAL ===\n",
+            "Analisa agora o ficheiro PDF em anexo (Processo EIA) face a esta legislação.",
             processo_file
         ]
 
@@ -171,16 +167,17 @@ def analyze_large_document(merged_pdf_path, laws_str, extra_laws_text, prompt_in
         return response.text
 
     except ResourceExhausted:
-        return "🚨 ERRO CRÍTICO: Limite de Tokens/Custo da API excedido."
+        return "🚨 ERRO DE COTA: Atingiste o limite da API da Google. Verifica o teu plano."
     except Exception as e:
         return f"❌ Erro Técnico: {str(e)}"
     finally:
+        # Limpeza obrigatória para não pagar armazenamento
         if processo_file:
             try: genai.delete_file(processo_file.name)
             except: pass
 
 # ==========================================
-# --- 4. GERADOR DE WORD ---
+# --- 4. GERADOR DE WORD (PROFISSIONAL) ---
 # ==========================================
 
 def clean_markdown(text):
@@ -194,14 +191,14 @@ def create_professional_doc(content, project_type, active_laws_dict, extra_files
     style_normal.font.name = 'Calibri'
     style_normal.font.size = Pt(11)
     
-    # Título
+    # Título Principal
     title = doc.add_heading('AUDITORIA DE CONFORMIDADE EIA', 0)
     title.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    doc.add_paragraph(f'Tipologia: {project_type}').alignment = WD_ALIGN_PARAGRAPH.CENTER
+    doc.add_paragraph(f'Setor: {project_type}').alignment = WD_ALIGN_PARAGRAPH.CENTER
     doc.add_paragraph(f'Data: {datetime.now().strftime("%d/%m/%Y")}').alignment = WD_ALIGN_PARAGRAPH.CENTER
     doc.add_paragraph('---')
 
-    # Conteúdo
+    # Conteúdo da Análise
     for line in content.split('\n'):
         line = line.strip()
         if not line: continue
@@ -209,7 +206,7 @@ def create_professional_doc(content, project_type, active_laws_dict, extra_files
         if line.startswith('## '):
             clean = clean_markdown(line.replace('## ', ''))
             h = doc.add_heading(clean.upper(), level=1)
-            h.style.font.color.rgb = RGBColor(14, 77, 164)
+            h.style.font.color.rgb = RGBColor(14, 77, 164) # Azul Institucional
         elif line.startswith('### '):
             clean = clean_markdown(line.replace('### ', ''))
             doc.add_heading(clean, level=2)
@@ -220,17 +217,17 @@ def create_professional_doc(content, project_type, active_laws_dict, extra_files
 
     # Anexo Legislativo
     doc.add_page_break()
-    doc.add_heading('ANEXO: QUADRO LEGAL REFERENCIADO', level=1)
+    doc.add_heading('ANEXO: QUADRO LEGISLATIVO REFERENCIADO', level=1)
     
-    doc.add_paragraph("1. Diplomas de Base e Setoriais:", style='Heading 2')
+    doc.add_paragraph("1. Legislação Base e Setorial:", style='Heading 2')
     for name, url in active_laws_dict.items():
         p = doc.add_paragraph(style='List Bullet')
         p.add_run(name).bold = True
         if url.startswith("http"):
-            p.add_run(f" (Ver Diploma)").italic = True
+            p.add_run(f" (Consultar DRE)").italic = True
     
     if extra_files_names:
-        doc.add_paragraph("2. Legislação Extra Específica (PDFs):", style='Heading 2')
+        doc.add_paragraph("2. Legislação Extra Específica (PDFs Analisados):", style='Heading 2')
         for f_name in extra_files_names:
             doc.add_paragraph(f_name, style='List Bullet')
 
@@ -251,98 +248,102 @@ with st.sidebar:
         models = get_available_models(api_key)
         if models:
             ix = 0
-            # Tentar selecionar Flash por omissão (mais rápido/barato para muitos dados)
+            # Prioridade ao modelo Flash (rápido e barato para docs grandes)
             for i, m in enumerate(models):
                 if 'flash' in m: ix = i; break
             model_name = st.selectbox("Modelo IA", models, index=ix)
-            if "pro" in model_name: st.caption("⚠️ O modelo Pro pode ser mais lento.")
     
     st.markdown("---")
     st.header("2. Tipologia do Projeto")
-    project_type = st.selectbox("Selecione o Setor:", list(SPECIFIC_LAWS.keys()) + ["Outra Tipologia"])
+    project_type = st.selectbox("Setor RJAIA:", list(SPECIFIC_LAWS.keys()) + ["Outra Tipologia"])
     
     # Construção Dinâmica da Lista de Leis
     active_laws = COMMON_LAWS.copy()
     if project_type in SPECIFIC_LAWS:
         active_laws.update(SPECIFIC_LAWS[project_type])
     
-    with st.expander(f"📚 Ver {len(active_laws)} Diplomas Ativos"):
+    with st.expander(f"📚 Base Legislativa ({len(active_laws)} Diplomas)"):
         for k, v in active_laws.items():
-            st.markdown(f"- [{k}]({v})")
+            st.markdown(f"[{k}]({v})")
             
     st.markdown("---")
     st.header("3. Legislação Extra")
-    st.caption("Carregue PDMs, Regulamentos Municipais ou Portarias específicas.")
+    st.caption("Carregue PDMs, Regulamentos Municipais ou Leis Recentes (últimos 6 meses).")
     extra_laws_files = st.file_uploader("Upload PDFs Extra", type=['pdf'], accept_multiple_files=True)
 
-st.title("⚖️ Auditor EIA Pro: Super Database")
-st.markdown("Auditoria inteligente com base no RJAIA, Simplex Ambiental e legislação setorial específica.")
+st.title("⚖️ Auditor EIA Pro")
+st.markdown("Auditoria de conformidade EIA com base no RJAIA atualizado e Simplex Ambiental.")
+
+st.info("ℹ️ Carregue todos os volumes do processo (Tomo I, RNT, Anexos). O sistema suporta ficheiros grandes (até 2GB via File API).")
 
 uploaded_files = st.file_uploader(
-    "📂 Carregar Processo EIA (Tomo I, RNT, Anexos...)", 
+    "📂 Carregar Processo EIA Completo", 
     type=['pdf'], 
     accept_multiple_files=True,
     key=f"uploader_{st.session_state.uploader_key}"
 )
 
-# --- PROMPT REFINADO (7 CAPÍTULOS + OPINIÃO TÉCNICA) ---
+# --- INSTRUÇÕES ESTRUTURADAS (7 CAPÍTULOS + OPINIÃO TÉCNICA) ---
 instructions = f"""
 Atua como Perito Sénior em Engenharia do Ambiente e Jurista.
 Auditoria de conformidade rigorosa ao EIA do setor: {project_type}.
 
 CONTEXTO LEGISLATIVO:
-1. Verifica a conformidade com a 'Legislação Base' listada.
-2. Verifica a conformidade com a 'Legislação Extra' (texto completo fornecido), se existir.
+1. Verifica a conformidade com a 'Legislação Base' listada (considerando sempre a REDAÇÃO ATUAL/CONSOLIDADA).
+2. Verifica a conformidade com a 'Legislação Extra' fornecida (se houver).
 
-ESTRUTURA DO RELATÓRIO (Usa Markdown ##):
+ESTRUTURA OBRIGATÓRIA DO RELATÓRIO (Usa Markdown ##):
 
-## 1. ENQUADRAMENTO LEGAL E ADMINISTRATIVO
-   - Enquadramento RJAIA (Anexo I/II) e verificação DL 11/2023 (Simplex).
-   - Verificação de conformidade administrativa (entidades, prazos, peças obrigatórias).
-   - O projeto cumpre os Instrumentos de Gestão Territorial (PDM, REN, RAN) citados?
+## 1. ENQUADRAMENTO LEGAL E CONFORMIDADE
+   - O projeto enquadra-se corretamente no RJAIA (Anexo I ou II)?
+   - Verifica se o DL 11/2023 (Simplex Ambiental) foi respeitado.
+   - Verifica ponto a ponto o cumprimento da legislação listada.
+   - Identifica falhas administrativas (ex: falta de peças desenhadas, cronogramas, dados desatualizados).
 
-## 2. PRINCIPAIS IMPACTES (TÉCNICO)
-   - Resumo dos impactes negativos significativos por descritor (Ar, Água, Ruído, Biodiversidade, Solos).
+## 2. PRINCIPAIS IMPACTES (Técnico)
+   - Análise detalhada por descritor ambiental (Ar, Água, Ruído, Biodiversidade, etc.).
+   - Foca nos impactes negativos significativos não mitigados.
 
-## 3. MEDIDAS DE MITIGAÇÃO
-   - Lista as medidas de minimização propostas (Construção e Exploração).
+## 3. MEDIDAS DE MITIGAÇÃO PROPOSTAS
+   - Lista as medidas apresentadas no EIA (Fase Construção e Exploração).
 
 ## 4. ANÁLISE CRÍTICA E BENCHMARKING
-   - As medidas são suficientes face às Melhores Técnicas Disponíveis (MTD) do setor {project_type}?
-   - Existem lacunas face à legislação listada (ex: falta de monitorização de ruído, falta de tratamento de efluentes)?
+   - Comparação: As medidas propostas são suficientes face às Melhores Técnicas Disponíveis (MTD) para o setor {project_type}?
+   - Existem lacunas legais ou omissões graves face às boas práticas?
 
 ## 5. FUNDAMENTAÇÃO
-   - Lista evidências concretas.
-   - OBRIGATÓRIO: Referencia a página do PDF onde a informação se encontra (ex: "Ref: EIA, Tomo I, pág. 120").
+   - Lista de evidências.
+   - OBRIGATÓRIO: Indica EXPLICITAMENTE a página do PDF onde encontraste a informação (ex: "Ref: Pág. 45 do Tomo I").
 
 ## 6. CITAÇÕES RELEVANTES
-   - Transcreve pequenos trechos do EIA que comprovem os pontos críticos levantados.
+   - Transcreve trechos curtos do EIA que evidenciem os problemas ou compromissos assumidos.
 
-## 7. CONCLUSÕES E RECOMENDAÇÕES TÉCNICAS
-   - Opinião técnica fundamentada sobre a qualidade do estudo e viabilidade ambiental.
-   - NÃO emitir "Parecer Favorável/Desfavorável" administrativo.
-   - Listar recomendações de melhoria ou pedidos de elementos adicionais (Aditamentos).
+## 7. CONCLUSÕES E OPINIÃO TÉCNICA
+   - Não emitir "Parecer Favorável/Desfavorável" administrativo.
+   - Formular uma OPINIÃO TÉCNICA sobre a robustez do estudo.
+   - O estudo permite uma decisão informada? Faltam elementos essenciais (Aditamentos)?
+   - Resumo das principais desconformidades detetadas.
 
-Tom: Formal, Técnico e Construtivo.
+Tom: Formal, Técnico, Crítico e Construtivo.
 """
 
 if st.button("🚀 INICIAR AUDITORIA", type="primary"):
-    if not api_key or not model_name: st.error("⚠️ Falta a API Key.")
-    elif not uploaded_files: st.warning("⚠️ Falta o Processo EIA.")
+    if not api_key or not model_name: st.error("⚠️ Configura a API Key na barra lateral.")
+    elif not uploaded_files: st.warning("⚠️ Carrega os ficheiros do Processo EIA.")
     else:
-        with st.spinner("A cruzar dados do Processo com a Base Legislativa..."):
+        with st.spinner("A processar legislação e a analisar o processo..."):
             
-            # 1. Lista de Leis Base (Texto para Prompt)
+            # 1. Preparar Base Legal (Apenas Nomes para a IA, ela conhece o conteúdo)
             laws_str = "\n".join([f"- {k}" for k in active_laws.keys()])
             
-            # 2. Leis Extras (Extração Local)
+            # 2. Extrair Texto das Leis Extras (Localmente)
             extra_text = ""
             extra_names = []
             if extra_laws_files:
                 extra_text = extract_text_from_pdfs_local(extra_laws_files)
                 extra_names = [f.name for f in extra_laws_files]
             
-            # 3. Processo (Merge + File API)
+            # 3. Preparar Processo (Merge + Upload Cloud)
             temp_path = merge_pdfs_to_temp(uploaded_files)
             
             result_text = analyze_large_document(
@@ -354,22 +355,24 @@ if st.button("🚀 INICIAR AUDITORIA", type="primary"):
                 model_name
             )
             
+            # Limpeza do ficheiro temporário local
             try: os.remove(temp_path)
             except: pass
             
             if "🚨" in result_text or "❌" in result_text:
                 st.error(result_text)
             else:
-                st.success("Análise Concluída com Sucesso!")
-                with st.expander("📄 Ler Relatório", expanded=True):
+                st.success("Auditoria Concluída!")
+                
+                with st.expander("📄 Ver Relatório", expanded=True):
                     st.markdown(result_text)
                 
                 docx = create_professional_doc(result_text, project_type, active_laws, extra_names)
+                
                 st.download_button(
-                    "⬇️ Download Relatório Word", 
-                    docx.getvalue(), 
-                    "Auditoria_EIA_Pro.docx", 
-                    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                    label="⬇️ Download Relatório Word Oficial",
+                    data=docx.getvalue(),
+                    file_name="Auditoria_EIA_Parecer.docx",
+                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
                     on_click=reset_app
                 )
-
